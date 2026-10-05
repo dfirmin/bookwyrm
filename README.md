@@ -45,6 +45,9 @@ dispatching Archivist runs. Each can attach later without changing the core (see
 
 ## Setup
 
+**On a Mac with voice and the desktop mascot:** follow [docs/setup-macos.md](docs/setup-macos.md).
+The steps below are the general version.
+
 Requirements: Python 3.11+, Docker or the GitHub MCP server's release binary (see below), and
 Hermes Agent installed so `hermes` is on your PATH.
 

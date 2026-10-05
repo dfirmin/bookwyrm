@@ -75,3 +75,39 @@ memory:
   memory_char_limit: 2200
   user_char_limit: 1375
   nudge_interval: 10
+
+# --- Voice, wake word and desktop mascot (desktop app) -----------------------------------------
+# All local: nothing leaves the machine except the text sent to the model.
+# These do not add agent tools — the desktop app runs speech in and out itself.
+
+voice:
+  auto_tts: true              # speak replies when a voice conversation starts
+  silence_duration: 2.0       # seconds of silence that end your turn
+  # Speech-to-text writes the name as it sounds, so stop phrases use "bookworm".
+  stop_phrases: ["stop", "thanks bookworm", "goodbye bookworm"]
+
+stt:
+  # Read by Hermes' transcription code but not seeded in its defaults, so `hermes config get`
+  # warns it is unrecognised. It is honoured.
+  provider: "local"           # Faster-Whisper on this machine; no key, no upload
+  local:
+    model: "base"             # "small" is more accurate and a bit slower
+    language: "en"
+    # Biases Whisper toward the bundle's vocabulary.
+    initial_prompt: "Bookwyrm, Archivist, knowledge bundle, quarantine, gap, contract, inbox, pull request."
+
+tts:
+  provider: "piper"           # local neural voice; first use downloads the voice (~60MB)
+  piper:
+    voice: "en_US-lessac-medium"
+
+wake_word:
+  enabled: false              # turn on from the desktop app (the ear by the mic)
+  # sherpa: free, local, and listens for whatever `phrase` says. The default engine
+  # (openWakeWord) needs macOS 15+ on Apple Silicon, and only knows "hey hermes".
+  provider: "sherpa"
+  # Spelled as it is SAID. Tested against the same sherpa model and settings: "hey bookworm"
+  # caught 11 of 12 spoken clips with no false triggers; "hey bookwyrm" caught none.
+  phrase: "hey bookworm"
+  sensitivity: 0.6
+  start_new_session: false    # continue the current conversation, so it remembers context

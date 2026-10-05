@@ -1,0 +1,113 @@
+# Bookwyrm — Hermes profile config.
+# install.sh copies this to ~/.hermes/profiles/bookwyrm/config.yaml and fills in the path
+# to this repo's skills/. Secrets go in that profile's .env, never here.
+# Decisions behind this file: docs/adr/0001-hermes-runtime-github-tools-sqlite-memory.md
+
+# Schema version of Hermes' config this file was written against (hermes-agent bb23628, Oct 2026).
+_config_version: 49
+
+model:
+  # Direct Anthropic API (ANTHROPIC_API_KEY in .env).
+  provider: "anthropic"
+  default: "claude-sonnet-5-5"
+
+  # LiteLLM gateway, or any OpenAI-compatible endpoint: comment out the two lines above and use
+  # these. Put the gateway key in .env as LITELLM_API_KEY.
+  # provider: "custom"
+  # default: "claude-sonnet-5-5"        # the model name your gateway exposes
+  # base_url: "https://litellm.example.internal/v1"
+  # api_key_env: "LITELLM_API_KEY"
+
+# Only what Bookwyrm needs: the GitHub MCP server, its own skills, memory and session search,
+# a scratch to-do list, and asking the person a question. No terminal, file, web or browser.
+platform_toolsets:
+  cli: [mcp-github, skills, memory, session_search, todo, clarify]
+
+mcp_servers:
+  github:
+    command: "docker"
+    args:
+      - "run"
+      - "-i"
+      - "--rm"
+      - "-e"
+      - "GITHUB_PERSONAL_ACCESS_TOKEN"
+      - "ghcr.io/github/github-mcp-server"
+    env:
+      # From the profile's .env. Use a fine-grained token scoped to the knowledge repo only.
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+    tools:
+      include:
+        # read
+        - get_file_contents
+        - search_code
+        - list_commits
+        - list_branches
+        # write, always on a branch (SOUL.md rules; branch protection on main enforces it)
+        - create_branch
+        - create_or_update_file
+        - push_files
+        - delete_file
+        # pull requests: open and read, never merge
+        - create_pull_request
+        - update_pull_request
+        - pull_request_read
+        - list_pull_requests
+        # issues: gap and quarantine issues
+        - list_issues
+        - search_issues
+        - issue_read
+        - issue_write
+        - add_issue_comment
+      prompts: false
+      resources: false
+
+skills:
+  # Bookwyrm's shipped skills. External dirs are read-only to the agent; skills it creates for
+  # itself go to the profile's own skills/ and are promoted here by pull request (ADR 0001 §5).
+  external_dirs:
+    - "__BOOKWYRM_SKILLS__"
+  creation_nudge_interval: 15
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  nudge_interval: 10
+
+# --- Voice, wake word and desktop mascot (desktop app) -----------------------------------------
+# All local: nothing leaves the machine except the text sent to the model.
+# These do not add agent tools — the desktop app runs speech in and out itself.
+
+voice:
+  auto_tts: true              # speak replies when a voice conversation starts
+  silence_duration: 2.0       # seconds of silence that end your turn
+  # Speech-to-text writes the name as it sounds, so stop phrases use "bookworm".
+  stop_phrases: ["stop", "thanks bookworm", "goodbye bookworm"]
+
+stt:
+  # Read by Hermes' transcription code but not seeded in its defaults, so `hermes config get`
+  # warns it is unrecognised. It is honoured.
+  provider: "local"           # Faster-Whisper on this machine; no key, no upload
+  local:
+    model: "base"             # "small" is more accurate and a bit slower
+    language: "en"
+    # Biases Whisper toward the bundle's vocabulary.
+    initial_prompt: "Bookwyrm, Archivist, knowledge bundle, quarantine, gap, contract, inbox, pull request."
+
+tts:
+  provider: "piper"           # local neural voice; first use downloads the voice (~60MB)
+  piper:
+    voice: "en_US-lessac-medium"
+
+wake_word:
+  enabled: false              # turn on from the desktop app (the ear by the mic)
+  # sherpa: free, local, and listens for whatever `phrase` says. The default engine
+  # (openWakeWord) needs macOS 15+ on Apple Silicon, and only knows "hey hermes".
+  provider: "sherpa"
+  # Spelled as it is SAID. Tested against the same sherpa model and settings: "hey bookworm"
+  # caught 11 of 12 spoken clips with no false triggers; "hey bookwyrm" caught none.
+  phrase: "hey bookworm"
+  sensitivity: 0.6
+  start_new_session: false    # continue the current conversation, so it remembers context

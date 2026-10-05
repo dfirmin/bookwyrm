@@ -45,8 +45,8 @@ dispatching Archivist runs. Each can attach later without changing the core (see
 
 ## Setup
 
-Requirements: Python 3.11+, Docker (for the GitHub MCP server), and Hermes Agent installed so
-`hermes` is on your PATH.
+Requirements: Python 3.11+, Docker or the GitHub MCP server's release binary (see below), and
+Hermes Agent installed so `hermes` is on your PATH.
 
 1. **Protect the knowledge repo's `main`.** Require a pull request before merging. Bookwyrm's
    rules say it only works through PRs; branch protection is what makes that true.
@@ -65,13 +65,34 @@ Requirements: Python 3.11+, Docker (for the GitHub MCP server), and Hermes Agent
    `GITHUB_PERSONAL_ACCESS_TOKEN`, plus `ANTHROPIC_API_KEY` or your gateway key.
 5. **Pick a model:** edit `model:` in `~/.hermes/profiles/bookwyrm/config.yaml` — direct
    Anthropic is the default; the LiteLLM block is there commented out.
-6. **Talk to it:**
+6. **Check the GitHub tools connect:**
+
+   ```bash
+   hermes -p bookwyrm mcp test github
+   ```
+
+   It should list the server's tools. If it says the `mcp` Python SDK is not installed, run
+   `hermes setup` and turn on MCP support (Hermes keeps it optional), then test again. Without
+   it Bookwyrm still starts, but with no GitHub tools: it will tell you it can't reach the repo.
+7. **Talk to it:**
 
    ```bash
    bookwyrm chat
    ```
 
+   At startup Hermes may print `Warning: Unknown toolsets: mcp-github`. That is a start-up
+   ordering message (the toolset is named before the MCP server has connected); the tools are
+   there once the server connects. `mcp test github` above is the real check.
+
 Re-run `install.sh` after pulling changes to `profile/`; it keeps your `.env` and memory.
+
+**No Docker?** Use the GitHub MCP server's release binary
+([releases](https://github.com/github/github-mcp-server/releases)) and pass its path to the
+installer, which wires it in place of Docker (and keeps doing so on every re-run):
+
+```bash
+./scripts/install.sh --repo dfirmin/archivist-knowledge-01 --github-mcp-bin ~/bin/github-mcp-server
+```
 
 ## Layout
 

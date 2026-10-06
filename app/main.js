@@ -9,8 +9,8 @@
 // - The voice service (../voice) is started here if it isn't already running.
 
 const {
-  app, BrowserWindow, ipcMain, Menu, Notification, Tray, nativeImage, nativeTheme, screen, session,
-  shell, systemPreferences,
+  app, BrowserWindow, globalShortcut, ipcMain, Menu, Notification, Tray, nativeImage, nativeTheme, screen,
+  session, shell, systemPreferences,
 } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -43,6 +43,15 @@ let layout = { side: "left", v: "up" };
 let robotPos = null;      // top-left of the robot's box, in screen coordinates
 let onCall = false;
 let state = readJson(COMPANION_STATE) || {};
+// "Hide robot" lasts until Bookwyrm is opened again: a restart always brings the robot back, so
+// nobody is left with a running app and nothing on screen.
+state.hidden = false;
+
+// Shows or hides the robot from anywhere. Ctrl+Option+B on a Mac, Ctrl+Alt+B elsewhere.
+const ROBOT_SHORTCUT = "Control+Alt+B";
+const SHORTCUT_LABEL = IS_MAC ? "⌃⌥B" : "Ctrl+Alt+B";
+// Shown next to the menu items on macOS and Windows; GTK menus on Linux don't take it.
+const SHORTCUT_HINT = process.platform === "linux" ? {} : { accelerator: ROBOT_SHORTCUT, registerAccelerator: false };
 
 // ---- small helpers ----------------------------------------------------------------------------
 
@@ -168,13 +177,12 @@ function setCompanionVisible(visible) {
   else {
     companion.webContents.send("action", { action: "close-card" });
     companion.hide();
-    if (!state.toldAboutHide && Notification.isSupported()) {
+    if (Notification.isSupported()) {
       new Notification({
-        title: "Bookwyrm is still here",
-        body: IS_MAC ? "Click its icon in the menu bar to bring the robot back." : "Click its icon in the system tray to bring the robot back.",
+        title: "Bookwyrm is still running",
+        body: `To bring the robot back, press ${SHORTCUT_LABEL}, open Bookwyrm again${IS_MAC ? " (Spotlight or Applications)" : " from the Start menu"}, or use its ${IS_MAC ? "menu-bar" : "tray"} icon.`,
         silent: true,
       }).show();
-      saveState({ toldAboutHide: true });
     }
   }
   saveState({ hidden: !visible });
@@ -236,7 +244,7 @@ ipcMain.on("menu:robot", async (_e, s) => {
       { label: "Library", click: () => openBookwyrmWindow({ view: "library" }) },
       await callsYouItem(),
       { type: "separator" },
-      { label: "Hide robot", click: () => setCompanionVisible(false) },
+      { label: "Hide robot", ...SHORTCUT_HINT, click: () => setCompanionVisible(false) },
       QUIT,
     ];
   }
@@ -263,7 +271,7 @@ async function refreshTray() {
     { label: "Send a message", enabled: !onCall, click: () => act("message") },
     { label: "Open Bookwyrm", click: () => openBookwyrmWindow() },
     { type: "separator" },
-    { label: "Show robot", type: "checkbox", checked: visible, click: (i) => setCompanionVisible(i.checked) },
+    { label: "Show robot", type: "checkbox", checked: visible, ...SHORTCUT_HINT, click: (i) => setCompanionVisible(i.checked) },
     await callsYouItem(),
     { label: "Settings…", click: () => openBookwyrmWindow({ view: "settings" }) },
     { type: "separator" },
@@ -472,7 +480,16 @@ ipcMain.handle("targets:list", (_e, opts = {}) => new Promise((resolve) => {
 if (!app.requestSingleInstanceLock()) {
   app.quit();   // already running: the running copy opens its window (below)
 } else {
-  app.on("second-instance", () => openBookwyrmWindow());
+  // Opening Bookwyrm while it's running (Spotlight, Applications, the Start menu, the Dock) brings
+  // everything back: the robot if it was hidden, and the Bookwyrm window, in front.
+  const bringBack = () => {
+    if (companion && !companion.isVisible()) setCompanionVisible(true);
+    openBookwyrmWindow();
+    if (IS_MAC) app.focus({ steal: true });
+  };
+  let started = false;   // macOS also sends "activate" at launch; only a later one is a reopen
+  app.on("second-instance", bringBack);
+  app.on("activate", () => { if (started) bringBack(); });
   app.setName("Bookwyrm");
   if (IS_WIN) app.setAppUserModelId("com.dfirmin.bookwyrm");
 
@@ -486,12 +503,14 @@ if (!app.requestSingleInstanceLock()) {
     if (!(await voiceHealth())) startVoiceService();
     createCompanion();
     createTray();
-    // Opening Bookwyrm from the Applications folder / Start menu with the robot hidden would
-    // look like nothing happened: show the window instead.
-    if (state.hidden && !process.argv.includes("--background")) openBookwyrmWindow();
+    setTimeout(() => { started = true; }, 2000);
+    if (!globalShortcut.register(ROBOT_SHORTCUT, () => setCompanionVisible(!companion?.isVisible()))) {
+      console.warn(`${ROBOT_SHORTCUT} is taken by another app; the robot's menu and the ${IS_MAC ? "menu-bar" : "tray"} icon still work.`);
+    }
   });
 
   app.on("before-quit", () => stopVoiceService());
+  app.on("will-quit", () => globalShortcut.unregisterAll());
   // Closing the Bookwyrm window leaves the robot; only Quit ends the app.
   app.on("window-all-closed", (e) => e.preventDefault?.());
 }

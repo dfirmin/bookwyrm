@@ -51,9 +51,9 @@ jobs:
         run: |
           .\install.ps1 --yes --plain --no-open --only uv,voice,models,app,launcher,settings --name "CI Runner" --team "Testing" --repo dfirmin/archivist-knowledge-01 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install.log"
           # The installer never exits non-zero (it must not close the user's window); check the result.
-          foreach ($p in @('voice\.venv\Scripts\python.exe', 'app\node_modules\electron\dist\electron.exe', 'app\dist\window.js', "$env:USERPROFILE\.bookwyrm\settings.json", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Bookwyrm.lnk")) {
-            if (-not (Test-Path $p)) { Write-Error "missing after install: $p"; exit 1 }
-          }
+          $missing = @('voice\.venv\Scripts\python.exe', 'app\node_modules\electron\dist\electron.exe', 'app\dist\window.js', "$env:USERPROFILE\.bookwyrm\settings.json", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Bookwyrm.lnk") | Where-Object { -not (Test-Path $_) }
+          if ($missing) { "missing after install: $missing" | Out-File -Append -Encoding utf8 "$env:RUNNER_TEMP\install.log"; exit 1 }
+          exit 0   # don't let an exit code left over from inside the installer decide the step
 
       - name: Put the installer's Node on PATH
         shell: bash

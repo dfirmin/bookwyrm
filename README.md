@@ -26,16 +26,28 @@ that a concept body restates its sources and adds nothing to them. A source note
 true, keeps who-said-what auditable, and lets the engine's verifier, gap and scoring stages run
 on the new content. See [ADR 0002](docs/adr/0002-sme-statements-enter-as-sources.md).
 
-**Call it.** A small book-dragon sits on the edge of your screen. Click it and it rings, picks up
-and talks, with a natural voice, live captions, and you can cut in whenever you like. It can also
-call *you* when something new lands in quarantine or a new gap is filed (off unless you switch it
-on). Speech is heard and spoken on your machine; only text goes to the model. See
-[ADR 0003](docs/adr/0003-voice-companion.md).
+**Call it, or message it.** A small robot sits at the edge of your screen, quietly, in your
+system's colours. Drag it wherever it's out of the way. Click it for a menu: **Call Bookwyrm**
+and it rings, picks up and talks, in a natural voice with live captions, and you can cut in
+whenever you like. **Send a message** to type instead. It can also call *you* when something new
+lands in quarantine or a new gap is filed (off unless you switch it on). Speech is heard and
+spoken on your machine; only text goes to the model. See [ADR 0003](docs/adr/0003-voice-companion.md)
+and [ADR 0004](docs/adr/0004-companion-v2-window-installer.md).
 
 <p>
-  <img src="docs/img/companion-docked.png" alt="The Bookwyrm dragon, docked" height="200">
-  <img src="docs/img/companion-on-call.png" alt="A call in progress, with live captions on the card" height="320">
-  <img src="docs/img/companion-incoming.png" alt="Bookwyrm calling about a new quarantined document" height="320">
+  <img src="docs/img/robot.png" alt="The Bookwyrm robot at the edge of the screen" height="120">
+  <img src="docs/img/call.png" alt="A call in progress: live captions as message bubbles, mute, type, open, hang up" height="320">
+  <img src="docs/img/incoming.png" alt="Bookwyrm calling about a new quarantined document" height="320">
+</p>
+
+**Open Bookwyrm** for the full window: every call and conversation (pick one up again by text
+or by voice), the **Library** of what needs you in the repo (quarantined drafts, gaps, open pull
+requests, each with *Ask Bookwyrm*), and **Settings** (your name and team, the repo, keys, voice,
+calls, open at login). Quit any time from the robot's menu or the menu-bar / tray icon.
+
+<p>
+  <img src="docs/img/window-library.png" alt="The Library: quarantine, gaps and pull requests" width="49%">
+  <img src="docs/img/window-chat-dark.png" alt="A call, saved in the conversation history (dark mode)" width="49%">
 </p>
 
 Not yet: the Teams bot, a meeting bot, Postgres memory, and dispatching Archivist runs. Each can
@@ -100,10 +112,9 @@ ANTHROPIC_API_KEY=... GITHUB_PERSONAL_ACCESS_TOKEN=... \
 knowledge repo's `main`** (require a pull request before merging). Bookwyrm's rules say it only
 works through PRs; branch protection is what makes that true.
 
-**Using Bookwyrm.** Open Bookwyrm and click the dragon to call it. Or talk to it in text:
-`hermes -p bookwyrm chat`. At startup Hermes may print `Warning: Unknown toolsets: mcp-github`;
-that is a start-up ordering message and the tools are there once the server connects
-(`hermes -p bookwyrm mcp test github` is the real check, and setup runs it for you).
+**Using Bookwyrm.** Open it like any app (Applications, the Start menu, or your app menu), then
+click the robot. [docs/setup.md](docs/setup.md) walks through it, with what to do if something's
+off. Bookwyrm also works in a terminal: `hermes -p bookwyrm chat`.
 
 **Choosing a model:** edit `model:` in `~/.hermes/profiles/bookwyrm/config.yaml`. Direct Anthropic
 is the default; a LiteLLM block is there commented out. Setup refreshes that file from
@@ -116,9 +127,11 @@ profile/                 Hermes profile template: config.yaml, SOUL.md, .env.exa
 skills/                  Bookwyrm's skills (loaded read-only via skills.external_dirs)
 voice/                   The call service: Pipecat pipeline, Hermes adapter, local speech models
 voice/prompts/           How Bookwyrm talks on a call
-app/                     The desktop companion (Electron): the dragon, the ring, the call card
+app/                     The desktop app (Electron): the robot, its call card, the Bookwyrm window
 install.sh, install.ps1  One-line installers: get Node.js and the source, start the wizard
 setup/                   The setup wizard (Ink): every install step, safe to re-run
+docs/setup.md            Installing, using, troubleshooting, removing
 docs/adr/                Decisions
+.github/workflows/       CI: install and test on macOS, Windows and Linux
 docs/live-proof/         What was run and what it showed
 ```

@@ -122,6 +122,7 @@ jobs:
         run: |
           for f in "$RUNNER_TEMP"/*.log; do
             [ -f "$f" ] || continue
-            body=$(tail -n 40 "$f" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            # Windows PowerShell 5.1 writes UTF-16: dropping the NULs leaves readable ASCII.
+            body=$(tr -d '\000\r' < "$f" | tail -n 40 | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=$(basename "$f")::${body}"
           done

@@ -30,7 +30,7 @@ export function finish(ctx, { openAtLogin, openNow }) {
   if (openNow) {
     try {
       launcher.launchApp(paths.app);
-      lines.push('✓ Opening Bookwyrm. Look for the dragon at the bottom right of your screen.');
+      lines.push('✓ Opening Bookwyrm. Look for the little robot at the bottom right of your screen; click it to call.');
     } catch (err) {
       lines.push(`! Couldn't open Bookwyrm: ${err.message}`);
     }

@@ -13,7 +13,8 @@ export const HELP = `Bookwyrm setup
   node setup/dist/setup.mjs [options]
 
   --yes, -y              don't ask anything (for scripts and CI); keys come from the
-                         ANTHROPIC_API_KEY and GITHUB_PERSONAL_ACCESS_TOKEN environment variables
+                         ANTHROPIC_API_KEY (or LITELLM_API_KEY) and GITHUB_PERSONAL_ACCESS_TOKEN
+                         environment variables
   --name "Dee Firmin"    your name            --team "Data Engineering"   your team
   --repo owner/name      the knowledge repo   --caller "Name, Team"       name and team in one
   --only a,b             run only these steps  --skip a,b                 skip these steps
@@ -21,6 +22,11 @@ export const HELP = `Bookwyrm setup
   --open / --no-open     open Bookwyrm at the end (default: ask; --yes: don't)
   --open-at-login / --no-open-at-login
                          start Bookwyrm when you log in (default: ask, yes; --yes: leave as is)
+  --provider anthropic|gateway
+                         how Bookwyrm reaches Claude: Anthropic directly (default), or your
+                         company's LiteLLM / OpenAI-compatible gateway
+  --gateway-url URL      the gateway's base URL, e.g. https://litellm.example.com/v1
+  --gateway-model NAME   the model name the gateway uses for Claude
   --github-mcp-bin PATH  use this GitHub MCP server binary instead of downloading one
   --profile NAME         Hermes profile name (default bookwyrm)
   --plain                plain text output, no animations
@@ -63,6 +69,14 @@ export function parseArgs(argv) {
       case '--caller': Object.assign(opts, splitCaller(take(i++, a))); break;
       case '--profile': opts.profile = take(i++, a); break;
       case '--github-mcp-bin': opts.githubMcpBin = take(i++, a); break;
+      case '--provider': {
+        const v = take(i++, a).toLowerCase();
+        if (!['anthropic', 'gateway', 'litellm'].includes(v)) throw new Error(`--provider is anthropic or gateway, got "${v}"`);
+        opts.provider = v === 'litellm' ? 'gateway' : v;
+        break;
+      }
+      case '--gateway-url': opts.gatewayUrl = normalizeGatewayUrl(take(i++, a)); break;
+      case '--gateway-model': opts.gatewayModel = take(i++, a).trim(); break;
       case '--only': case '--skip': {
         // "a,b,c", or "a b c": PowerShell passes an unquoted a,b,c as separate arguments.
         let v = take(i++, a);
@@ -75,8 +89,15 @@ export function parseArgs(argv) {
     }
   }
   if (opts.repo && !REPO_RE.test(opts.repo)) throw new Error(`--repo should look like owner/name, got "${opts.repo}"`);
+  if ((opts.gatewayUrl || opts.gatewayModel) && !opts.provider) opts.provider = 'gateway';
+  if (opts.gatewayUrl && !/^https?:\/\/[^\s/]+/.test(opts.gatewayUrl)) throw new Error(`--gateway-url should start with https:// (or http://), got "${opts.gatewayUrl}"`);
   if (opts.githubMcpBin && !fs.existsSync(opts.githubMcpBin)) throw new Error(`--github-mcp-bin: no such file: ${opts.githubMcpBin}`);
   return opts;
+}
+
+/** "https://gw.example.com/v1/" → "https://gw.example.com/v1" (we add /v1 later only if needed). */
+export function normalizeGatewayUrl(url) {
+  return String(url || '').trim().replace(/\/+$/, '').replace(/\/chat\/completions$/, '');
 }
 
 function splitCaller(caller) {
@@ -95,26 +116,39 @@ export function prefill(opts) {
   const settings = readJson(paths.settings) || {};
   const legacy = readEnvFile(path.join(paths.voice, '.env'));
   const fromLegacy = legacy.BOOKWYRM_CALLER ? splitCaller(legacy.BOOKWYRM_CALLER) : {};
+  const saved = settings.model || {};
   return {
     name: opts.name ?? settings.name ?? fromLegacy.name ?? '',
     team: opts.team ?? settings.team ?? fromLegacy.team ?? '',
     repo: opts.repo ?? settings.repo ?? legacy.BOOKWYRM_REPO ?? '',
+    // How Bookwyrm reaches Claude: flags, then what was chosen last time, then Anthropic directly.
+    provider: opts.provider ?? saved.provider ?? 'anthropic',
+    gatewayUrl: opts.gatewayUrl ?? saved.base_url ?? '',
+    gatewayModel: opts.gatewayModel ?? saved.name ?? '',
   };
 }
 
 export function existingKeys(profile) {
   const env = readEnvFile(path.join(profileDir(profile), '.env'));
-  return { anthropicKey: env.ANTHROPIC_API_KEY || '', githubToken: env.GITHUB_PERSONAL_ACCESS_TOKEN || '' };
+  return {
+    anthropicKey: env.ANTHROPIC_API_KEY || '',
+    gatewayKey: env.LITELLM_API_KEY || '',
+    githubToken: env.GITHUB_PERSONAL_ACCESS_TOKEN || '',
+  };
 }
+
+/** The key that matters for the chosen provider. */
+export const modelKeyField = (answers) => (answers.provider === 'gateway' ? 'gatewayKey' : 'anthropicKey');
 
 /** A quick look around for the welcome screen. Only file checks: it must be instant. */
 export function detectState(profile) {
   const keys = existingKeys(profile);
+  const modelKey = (readJson(paths.settings)?.model?.provider === 'gateway') ? keys.gatewayKey : keys.anthropicKey;
   const { electronBinary } = loadLauncher();
   return [
     { label: 'Hermes Agent', ok: Boolean(findHermes()) },
     { label: `Bookwyrm profile (${profile})`, ok: fs.existsSync(profileDir(profile)) },
-    { label: 'Anthropic key and GitHub token', ok: Boolean(keys.anthropicKey && keys.githubToken), partial: Boolean(keys.anthropicKey || keys.githubToken) },
+    { label: 'Model key and GitHub token', ok: Boolean(modelKey && keys.githubToken), partial: Boolean(modelKey || keys.githubToken) },
     { label: 'Voice service', ok: fs.existsSync(paths.venvPython) },
     { label: 'Speech models', ok: modelsPresent() },
     { label: 'Companion app', ok: fs.existsSync(electronBinary(paths.app)) && fs.existsSync(path.join(paths.app, 'dist')) },
@@ -159,6 +193,65 @@ export async function checkGitHub(token, repo) {
   if (r.status === 404 || r.status === 403) return { ok: false, message: `This token can't see ${repo}. When you make the token, pick "Only select repositories" and choose ${repo}.` };
   if (r.status === 0) return { ok: false, message: `Couldn't reach GitHub to check the token (${r.error}).` };
   return { ok: false, message: `GitHub answered with an unexpected status (${r.status}).` };
+}
+
+// A company gateway (LiteLLM or any OpenAI-compatible endpoint). One streamed request that must
+// call a tool proves the four things Bookwyrm needs: the URL, the key, the model name, and
+// streamed tool calls (every GitHub action is a tool call; calls speak while the reply streams).
+const PING_TOOL = { type: 'function', function: { name: 'ping', description: 'Checks the connection.', parameters: { type: 'object', properties: {} } } };
+
+async function post(url, headers, body, timeoutMs = 60000) {
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+    return { status: res.status, text: await res.text() };
+  } catch (err) {
+    return { status: 0, error: err.cause?.code || err.message };
+  }
+}
+
+function gatewayError(r, what) {
+  try {
+    const e = JSON.parse(r.text).error;
+    return (typeof e === 'string' ? e : e?.message || '').split('\n')[0].slice(0, 220);
+  } catch {
+    return (r.text || '').slice(0, 220) || what;
+  }
+}
+
+/** → { ok, message, baseUrl, models? }. baseUrl may gain /v1 if the gateway only answers there. */
+export async function checkGateway(baseUrl, key, model) {
+  baseUrl = normalizeGatewayUrl(baseUrl);
+  if (!/^https?:\/\//.test(baseUrl)) return { ok: false, message: 'The gateway address should start with https://.' };
+  const auth = { Authorization: `Bearer ${key}` };
+  let models = await get(`${baseUrl}/models`, auth);
+  if (models.status === 404 && !/\/v1$/.test(baseUrl)) {
+    const withV1 = await get(`${baseUrl}/v1/models`, auth);
+    if (withV1.status === 200) { baseUrl = `${baseUrl}/v1`; models = withV1; }
+  }
+  if (models.status === 0) return { ok: false, message: `Couldn't reach the gateway at ${baseUrl} (${models.error}). Are you on the company network or VPN?`, baseUrl };
+  if (models.status === 401 || models.status === 403) return { ok: false, message: 'The gateway didn\'t accept this key.', baseUrl };
+  const ids = Array.isArray(models.body?.data) ? models.body.data.map((m) => m.id).filter(Boolean) : [];
+  if (models.status === 200 && ids.length && !ids.includes(model)) {
+    return { ok: false, message: `The gateway has no model called "${model}". It offers: ${ids.slice(0, 8).join(', ')}${ids.length > 8 ? ', …' : ''}.`, baseUrl, models: ids };
+  }
+
+  const r = await post(`${baseUrl}/chat/completions`, auth, {
+    model, stream: true, max_tokens: 200, tool_choice: 'auto', tools: [PING_TOOL],
+    messages: [
+      { role: 'system', content: 'You are a connection check. Call the ping tool once and say nothing else.' },
+      { role: 'user', content: 'Check the connection.' },
+    ],
+  });
+  if (r.status === 0) return { ok: false, message: `Couldn't reach the gateway at ${baseUrl} (${r.error}).`, baseUrl, models: ids };
+  if (r.status === 401 || r.status === 403) return { ok: false, message: 'The gateway didn\'t accept this key.', baseUrl, models: ids };
+  if (r.status === 404) return { ok: false, message: `The gateway answered 404 at ${baseUrl}/chat/completions. Check the address (it usually ends in /v1).`, baseUrl, models: ids };
+  if (r.status !== 200) return { ok: false, message: `The gateway refused the test request: ${gatewayError(r, `status ${r.status}`)}`, baseUrl, models: ids };
+  const streamed = r.text.split('\n').some((l) => l.startsWith('data:'));
+  if (!streamed) return { ok: false, message: 'The gateway answered, but not as a stream. Bookwyrm needs streaming to talk while it thinks.', baseUrl, models: ids };
+  if (!/"tool_calls"\s*:\s*\[\s*\{/.test(r.text) || !r.text.includes('"ping"')) {
+    return { ok: false, message: `"${model}" answered, but didn't call a tool. Bookwyrm needs tool calls for everything it does in GitHub; use a Claude model.`, baseUrl, models: ids };
+  }
+  return { ok: true, message: `The gateway accepted the key, and "${model}" streams and calls tools.`, baseUrl, models: ids };
 }
 
 export const GITHUB_TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new';

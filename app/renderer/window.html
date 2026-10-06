@@ -98,6 +98,52 @@
           </div>
           <p class="hint">Bookwyrm greets you by name, and attributes what you tell it to you and your team.</p>
 
+          <h2>Model</h2>
+          <div class="group">
+            <label class="row">
+              <span>Connect to Claude through</span>
+              <select name="provider" id="provider">
+                <option value="anthropic">Anthropic directly</option>
+                <option value="gateway">My company's gateway (LiteLLM)</option>
+              </select>
+            </label>
+            <label class="row" data-for="gateway">
+              <span>Gateway address</span>
+              <input name="gateway_url" placeholder="https://litellm.yourcompany.com/v1" spellcheck="false" />
+            </label>
+            <label class="row" data-for="gateway">
+              <span>Model name<small>What the gateway calls Claude</small></span>
+              <input name="gateway_model" placeholder="claude-sonnet" spellcheck="false" />
+            </label>
+            <div class="row" data-key="gatewayKey" data-for="gateway">
+              <span>Gateway key</span>
+              <div class="control">
+                <span class="key-status" id="gateway-status"></span>
+                <button type="button" class="button small replace">Replace…</button>
+              </div>
+            </div>
+            <div class="row key-entry" data-entry="gatewayKey" hidden>
+              <input type="password" placeholder="sk-…" spellcheck="false" />
+              <button type="button" class="button small primary save-key">Save</button>
+            </div>
+            <div class="row" data-key="anthropicKey" data-for="anthropic">
+              <span>Anthropic API key</span>
+              <div class="control">
+                <span class="key-status" id="anthropic-status"></span>
+                <button type="button" class="button small replace">Replace…</button>
+              </div>
+            </div>
+            <div class="row key-entry" data-entry="anthropicKey" hidden>
+              <input type="password" placeholder="sk-ant-…" spellcheck="false" />
+              <button type="button" class="button small primary save-key">Save</button>
+            </div>
+            <div class="row" id="model-apply-row" hidden>
+              <span id="model-apply-note">Bookwyrm checks the new settings work before using them.</span>
+              <button type="button" class="button small primary" id="model-apply">Save and check</button>
+            </div>
+          </div>
+          <p class="hint" id="model-hint">Bookwyrm thinks with Claude. If your company gives you a LiteLLM address and key rather than an Anthropic key, choose the gateway; Bookwyrm checks the model streams and can use tools before switching.</p>
+
           <h2>Knowledge repo</h2>
           <div class="group">
             <div class="row">
@@ -116,17 +162,6 @@
             </div>
             <div class="row key-entry" data-entry="githubToken" hidden>
               <input type="password" placeholder="github_pat_…" spellcheck="false" />
-              <button type="button" class="button small primary save-key">Save</button>
-            </div>
-            <div class="row" data-key="anthropicKey">
-              <span>Anthropic API key</span>
-              <div class="control">
-                <span class="key-status" id="anthropic-status"></span>
-                <button type="button" class="button small replace">Replace…</button>
-              </div>
-            </div>
-            <div class="row key-entry" data-entry="anthropicKey" hidden>
-              <input type="password" placeholder="sk-ant-…" spellcheck="false" />
               <button type="button" class="button small primary save-key">Save</button>
             </div>
           </div>

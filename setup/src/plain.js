@@ -4,7 +4,8 @@ import readline from 'node:readline';
 import { runSteps } from './engine.js';
 import { STEPS } from './steps.js';
 import {
-  ANTHROPIC_KEY_URL, GITHUB_TOKEN_URL, REPO_RE, checkAnthropic, checkGitHub, detectState, existingKeys, selectedSteps,
+  ANTHROPIC_KEY_URL, GITHUB_TOKEN_URL, REPO_RE, checkAnthropic, checkGateway, checkGitHub, detectState, existingKeys,
+  normalizeGatewayUrl, selectedSteps,
 } from './state.js';
 import { addSecret, mask } from './sys.js';
 import { finish, needsAbout, needsKeys, openLaterHint } from './finish.js';
@@ -44,7 +45,7 @@ async function askKey(p, ctx, { label, existing, url, explain, check }) {
   for (;;) {
     out();
     explain.forEach((l) => out(`  ${l}`));
-    out(`  Get one at: ${url}`);
+    out(/^https?:/.test(url) ? `  Get one at: ${url}` : `  Don't have one? ${url[0].toUpperCase()}${url.slice(1)}.`);
     const keepHint = existing ? `Enter keeps the one you have (${mask(existing)})` : 'Enter skips it for now';
     const value = await p.ask(`  ${label} (${keepHint}): `, { secret: true });
     const key = value || existing;
@@ -154,31 +155,78 @@ export async function runPlain(ctx) {
   }
 }
 
+async function chooseModel(ctx, p) {
+  const a = ctx.answers;
+  if (!p) {
+    if (a.provider === 'gateway' && !(a.gatewayUrl && a.gatewayModel)) {
+      throw new Error('--provider gateway needs --gateway-url and --gateway-model');
+    }
+    return;
+  }
+  out();
+  out('How should Bookwyrm reach Claude?');
+  out('  1. Anthropic directly, with an Anthropic API key');
+  out('  2. My company\'s gateway (LiteLLM, or another OpenAI-compatible endpoint)');
+  const def = a.provider === 'gateway' ? '2' : '1';
+  const pick = (await p.ask(`  Choose 1 or 2 [${def}]: `)) || def;
+  a.provider = pick.startsWith('2') ? 'gateway' : 'anthropic';
+  if (a.provider !== 'gateway') return;
+  for (let tries = 0; ; tries++) {
+    const url = normalizeGatewayUrl((await p.ask(`  Gateway address, e.g. https://litellm.yourcompany.com/v1${a.gatewayUrl ? ` [${a.gatewayUrl}]` : ''}: `)) || a.gatewayUrl);
+    if (/^https?:\/\/\S+$/.test(url)) { a.gatewayUrl = url; break; }
+    out('  That should be a web address starting with https://.');
+    if (tries >= 4) throw new Error('no gateway address given');
+  }
+  for (;;) {
+    a.gatewayModel = (await p.ask(`  Model name on the gateway (what it calls Claude)${a.gatewayModel ? ` [${a.gatewayModel}]` : ''}: `)) || a.gatewayModel;
+    if (a.gatewayModel) break;
+  }
+}
+
+/** The key for whichever way Bookwyrm reaches Claude. */
+function modelKeySpec(ctx, have) {
+  const a = ctx.answers;
+  if (a.provider === 'gateway') {
+    return {
+      field: 'gatewayKey', env: 'LITELLM_API_KEY', label: 'Gateway key', existing: have.gatewayKey,
+      url: 'ask whoever runs the gateway',
+      explain: [`Your key for ${a.gatewayUrl}. I'll check "${a.gatewayModel}" answers, streams and calls tools.`],
+      check: async (k) => {
+        const r = await checkGateway(a.gatewayUrl, k, a.gatewayModel);
+        if (r.baseUrl) a.gatewayUrl = r.baseUrl;
+        return r;
+      },
+    };
+  }
+  return {
+    field: 'anthropicKey', env: 'ANTHROPIC_API_KEY', label: 'Anthropic API key', existing: have.anthropicKey,
+    url: ANTHROPIC_KEY_URL,
+    explain: ['Bookwyrm thinks with Claude, through your Anthropic API key (starts with sk-ant-).'],
+    check: checkAnthropic,
+  };
+}
+
 async function keys(ctx, p) {
   const have = existingKeys(ctx.profile);
   const a = ctx.answers;
+  await chooseModel(ctx, p);
+  const spec = modelKeySpec(ctx, have);
   if (!p) {
     // --yes: environment first, then what the profile already has.
-    a.anthropicKey = process.env.ANTHROPIC_API_KEY || null;
+    a[spec.field] = process.env[spec.env] || null;
     a.githubToken = process.env.GITHUB_PERSONAL_ACCESS_TOKEN || null;
-    addSecret(a.anthropicKey);
+    addSecret(a[spec.field]);
     addSecret(a.githubToken);
-    const anth = a.anthropicKey || have.anthropicKey;
+    const modelKey = a[spec.field] || spec.existing;
     const gh = a.githubToken || have.githubToken;
     if (ctx.opts.dryRun) return;
-    if (anth) { const r = await checkAnthropic(anth); out(`${r.ok ? '✓' : '! warning:'} ${r.message}`); } else out('! warning: no ANTHROPIC_API_KEY');
+    if (modelKey) { const r = await spec.check(modelKey); out(`${r.ok ? '✓' : '! warning:'} ${r.message}`); } else out(`! warning: no ${spec.env}`);
     if (gh && a.repo) { const r = await checkGitHub(gh, a.repo); out(`${r.ok ? '✓' : '! warning:'} ${r.message}`); } else if (!gh) out('! warning: no GITHUB_PERSONAL_ACCESS_TOKEN');
     return;
   }
   out();
   out('Keys');
-  a.anthropicKey = await askKey(p, ctx, {
-    label: 'Anthropic API key',
-    existing: have.anthropicKey,
-    url: ANTHROPIC_KEY_URL,
-    explain: ['Bookwyrm thinks with Claude, through your Anthropic API key (starts with sk-ant-).'],
-    check: checkAnthropic,
-  });
+  a[spec.field] = await askKey(p, ctx, spec);
   a.githubToken = await askKey(p, ctx, {
     label: 'GitHub token',
     existing: have.githubToken,

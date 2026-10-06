@@ -419,7 +419,8 @@ ipcMain.handle("app:info", () => ({
 }));
 
 // The knowledge repo and the keys also change the Hermes profile, so they go through the setup
-// wizard (run with Electron's own Node, no terminal needed). Keys travel by environment only.
+// wizard (run with Electron's own Node, no terminal needed). So does the model: Anthropic directly,
+// or a company gateway. Keys travel by environment only, never on the command line.
 ipcMain.handle("setup:apply", (e, changes = {}) => new Promise((resolve) => {
   if (!fs.existsSync(SETUP_SCRIPT)) {
     resolve({ ok: false, message: "The setup wizard isn't installed here. Run the Bookwyrm installer again." });
@@ -427,10 +428,14 @@ ipcMain.handle("setup:apply", (e, changes = {}) => new Promise((resolve) => {
   }
   const args = [SETUP_SCRIPT, "--yes", "--plain", "--only", "profile,api,check,settings", "--no-open"];
   if (changes.repo) args.push("--repo", changes.repo);
+  if (changes.provider) args.push("--provider", changes.provider);
+  if (changes.provider === "gateway") args.push("--gateway-url", changes.gatewayUrl, "--gateway-model", changes.gatewayModel);
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
   delete env.ANTHROPIC_API_KEY;
+  delete env.LITELLM_API_KEY;
   delete env.GITHUB_PERSONAL_ACCESS_TOKEN;
   if (changes.anthropicKey) env.ANTHROPIC_API_KEY = changes.anthropicKey;
+  if (changes.gatewayKey) env.LITELLM_API_KEY = changes.gatewayKey;
   if (changes.githubToken) env.GITHUB_PERSONAL_ACCESS_TOKEN = changes.githubToken;
   const child = spawn(process.execPath, args, { cwd: REPO_DIR, env, windowsHide: true });
   const send = (buf) => {

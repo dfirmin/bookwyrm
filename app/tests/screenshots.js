@@ -67,6 +67,8 @@ const WINDOW = {
   "window-new": { js: `document.getElementById('nav-new').click()` },
   "window-library": { js: `document.getElementById('nav-library').click()` },
   "window-settings": { js: `document.getElementById('nav-settings').click()` },
+  "window-settings-model": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{document.getElementById("settings-view").querySelector(".scroller").scrollTop=250},900)` },
+  "window-settings-switch": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{const f=document.getElementById("settings"); f.provider.value="anthropic"; f.provider.dispatchEvent(new Event("change")); document.getElementById("settings-view").querySelector(".scroller").scrollTop=250},2500)` },
   "window-chat-dark": { dark: true, js: `document.querySelector('.conv')?.click()` },
 };
 
@@ -100,7 +102,7 @@ app.whenReady().then(async () => {
     await win.webContents.insertCSS(MATERIAL);
     await new Promise((r) => setTimeout(r, 1200));
     await win.webContents.executeJavaScript(scene.js);
-    await new Promise((r) => setTimeout(r, name.includes("library") ? 3500 : 1500));
+    await new Promise((r) => setTimeout(r, name.includes("library") || name.includes("switch") ? 3500 : 1500));
     fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
     console.log("shot", name);
   }

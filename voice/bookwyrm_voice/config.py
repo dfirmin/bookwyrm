@@ -138,12 +138,18 @@ class Settings:
 
     def public(self) -> dict:
         """What the app's Settings page shows. No secrets, only whether they're set."""
+        saved_model = read_settings_file().get("model") or {}
+        model = {"provider": "gateway", "base_url": saved_model.get("base_url", ""), "name": saved_model.get("name", "")} \
+            if saved_model.get("provider") == "gateway" else {"provider": "anthropic"}
+        secrets = read_env_file(self.profile_env)
         return {
+            "model": model,
             "name": self.name, "team": self.team, "repo": self.repo, "profile": self.profile,
             "voice": self.voice, "voice_speed": self.voice_speed,
             "calls_you": self.calls_you, "watch_minutes": self.watch_minutes,
             "keys": {"github": bool(self.github_token), "hermes_api": bool(self.hermes_key),
-                     "anthropic": bool(read_env_file(self.profile_env).get("ANTHROPIC_API_KEY"))},
+                     "anthropic": bool(secrets.get("ANTHROPIC_API_KEY")),
+                     "gateway": bool(secrets.get("LITELLM_API_KEY"))},
             "paths": {"settings": str(settings_file()), "profile_env": str(self.profile_env),
                       "models": str(self.models_dir), "data": str(data_dir())},
         }

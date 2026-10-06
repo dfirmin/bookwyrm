@@ -40,15 +40,16 @@ jobs:
       - name: Install (macOS, Linux)
         if: runner.os != 'Windows'
         shell: bash
-        run: >-
-          ./install.sh --yes --plain --no-open --only voice,models,app,launcher,settings
-          --name "CI Runner" --team "Testing" --repo dfirmin/archivist-knowledge-01
+        run: |
+          set -o pipefail
+          ./install.sh --yes --plain --no-open --only uv,voice,models,app,launcher,settings \
+            --name "CI Runner" --team "Testing" --repo dfirmin/archivist-knowledge-01 2>&1 | tee "$RUNNER_TEMP/install.log"
 
       - name: Install (Windows)
         if: runner.os == 'Windows'
         shell: powershell   # Windows PowerShell 5.1, what most people's machines have
         run: |
-          .\install.ps1 --yes --plain --no-open --only voice,models,app,launcher,settings --name "CI Runner" --team "Testing" --repo dfirmin/archivist-knowledge-01
+          .\install.ps1 --yes --plain --no-open --only uv,voice,models,app,launcher,settings --name "CI Runner" --team "Testing" --repo dfirmin/archivist-knowledge-01 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install.log"
           # The installer never exits non-zero (it must not close the user's window); check the result.
           foreach ($p in @('voice\.venv\Scripts\python.exe', 'app\node_modules\electron\dist\electron.exe', 'app\dist\window.js', "$env:USERPROFILE\.bookwyrm\settings.json", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Bookwyrm.lnk")) {
             if (-not (Test-Path $p)) { Write-Error "missing after install: $p"; exit 1 }
@@ -74,8 +75,8 @@ jobs:
         working-directory: voice
         run: |
           py=.venv/bin/python; [ -x "$py" ] || py=.venv/Scripts/python.exe
-          "$py" tests/test_units.py
-          "$py" tests/test_engines.py
+          set -o pipefail
+          { "$py" tests/test_units.py && "$py" tests/test_engines.py; } 2>&1 | tee "$RUNNER_TEMP/voice-tests.log"
 
       - name: The voice service starts and loads its voice
         shell: bash
@@ -94,11 +95,12 @@ jobs:
         shell: bash
         working-directory: app
         run: |
+          set -o pipefail
           if [ "$RUNNER_OS" = Linux ]; then
             sudo apt-get install -y -qq xvfb >/dev/null
-            xvfb-run -a -s "-screen 0 1920x1080x24" npx electron --no-sandbox tests/smoke.js
+            xvfb-run -a -s "-screen 0 1920x1080x24" npx electron --no-sandbox tests/smoke.js 2>&1 | tee "$RUNNER_TEMP/smoke.log"
           else
-            npx electron tests/smoke.js
+            npx electron tests/smoke.js 2>&1 | tee "$RUNNER_TEMP/smoke.log"
           fi
 
       - name: Screenshots, as this system draws them
@@ -112,3 +114,14 @@ jobs:
         with:
           name: screenshots-${{ runner.os }}
           path: ${{ runner.temp }}/shots
+
+      # Show why it failed in the run's annotations (readable without opening the full log).
+      - name: Report failure
+        if: failure()
+        shell: bash
+        run: |
+          for f in "$RUNNER_TEMP"/*.log; do
+            [ -f "$f" ] || continue
+            body=$(tail -n 40 "$f" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=$(basename "$f")::${body}"
+          done

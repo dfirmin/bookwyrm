@@ -82,7 +82,14 @@ echo "  models in ~/.bookwyrm/models"
 
 # ---- 4. companion app -------------------------------------------------------------------------
 step "4/4 Companion app"
-command -v npm >/dev/null || { echo "npm not found: install Node.js 20+ (https://nodejs.org) and re-run" >&2; exit 1; }
+# Electron 44 needs Node 22.12 or newer (its installer is an ES module).
+node_ok=$(node -e 'const [a,b]=process.versions.node.split(".").map(Number); console.log(a>22||(a===22&&b>=12)?1:0)' 2>/dev/null || echo 0)
+if ! command -v npm >/dev/null || [ "$node_ok" != 1 ]; then
+  echo "  ! Node.js 22.12 or newer is needed (found: $(node --version 2>/dev/null || echo none))." >&2
+  echo "    Install Node 22 LTS from https://nodejs.org, open a new Terminal, then:" >&2
+  echo "    rm -rf \"$here/app/node_modules\" && re-run this script" >&2
+  exit 1
+fi
 (cd "$here/app" && npm install --silent && npm run build >/dev/null 2>&1)
 echo "  built app/"
 

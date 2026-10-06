@@ -86,8 +86,10 @@ cd ~/bookwyrm && git pull
 node --version
 ```
 
-If `node` isn't found (or is older than 20), install it from [nodejs.org](https://nodejs.org)
-(the macOS installer), then open a new Terminal window.
+You need **v22.12 or newer** (the app's Electron requires it). If `node` isn't found or is older,
+install **Node 22 LTS** from [nodejs.org](https://nodejs.org) (the macOS installer), then open a
+new Terminal window. If an earlier attempt failed with `ERR_REQUIRE_ESM`, delete
+`~/bookwyrm/app/node_modules` before step 8.
 
 ## 8. Set up the voice
 

@@ -1,68 +1,108 @@
-// Render the companion in each state and save screenshots (design review; no voice service needed).
-//   xvfb-run -a npx electron tests/screenshots.js <outdir>
-const { app, BrowserWindow, ipcMain } = require("electron");
+// Render the robot, the call card and the Bookwyrm window, light and dark, and save screenshots.
+//   xvfb-run -a npx electron tests/screenshots.js <outdir> [darwin|win32]
+// Companion scenes need nothing running. Window scenes read the running voice service
+// (history, library, settings) at 127.0.0.1:7865, so start it first for real content.
+const { app, BrowserWindow, ipcMain, nativeTheme } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 
-const out = path.resolve(process.argv[process.argv.length - 1]);
+const argv = process.argv.slice(2).filter((a) => !a.startsWith("-") && !a.endsWith(".js") && a !== ".");
+const OS = argv.find((a) => ["darwin", "win32"].includes(a)) || "darwin";
+const out = path.resolve(argv.find((a) => a !== OS) || "screens");
 fs.mkdirSync(out, { recursive: true });
 app.commandLine.appendSwitch("no-sandbox");
 app.commandLine.appendSwitch("force-device-scale-factor", "2");
 
-const SIZES = { docked: { width: 150, height: 176 }, open: { width: 470, height: 560 } };
-ipcMain.handle("voice:url", () => "http://127.0.0.1:9");
-ipcMain.handle("voice:health", () => null);
-ipcMain.on("window:shape", () => {});
-ipcMain.on("menu:dragon", () => {});
+const VOICE = "http://127.0.0.1:7865";
+ipcMain.handle("voice:url", () => VOICE);
+ipcMain.handle("voice:health", async () => { try { return await (await fetch(`${VOICE}/health`)).json(); } catch { return null; } });
+ipcMain.handle("os:info", () => ({ platform: OS, accent: "#0a84ff", accentText: "#ffffff" }));
+ipcMain.handle("login:get", () => true);
+ipcMain.handle("companion:visible", () => true);
+ipcMain.handle("app:info", () => ({ log: "~/.bookwyrm/voice.log", platform: OS }));
+for (const ch of ["window:shape", "window:interactive", "menu:robot", "drag:start", "drag:end", "call:state", "window:open"]) ipcMain.on(ch, () => {});
 
-const DESKTOP = "html{background:linear-gradient(160deg,#7f8f96,#a9b5b0)!important}";
+// What sits behind the transparent companion on a real desktop, and the OS sidebar material.
+const DESKTOP = "html{background:linear-gradient(160deg,#8fa3b8,#c9b8a8)!important}";
+const MATERIAL = "body{background:light-dark(#e9e9eb,#2b2b2e)!important;color-scheme:light dark}";
 
-const SCENES = {
-  "1-docked": { shape: "docked", js: `document.body.dataset.state='idle'` },
-  "2-ringing": { shape: "open", js: `
-    document.body.dataset.state='ringing'; document.body.dataset.shape='open';
-    document.getElementById('status').textContent='Calling Bookwyrm…'; hangup.hidden=false;` },
-  "3-on-call": { shape: "open", js: `
-    document.body.dataset.state='speaking'; document.body.dataset.shape='open';
-    document.body.style.setProperty('--level','0.7');
-    document.getElementById('status').textContent='On a call · 1:42'; stamp.textContent='9:41 PM'; stamp.hidden=false;
-    const add=(cls,who,t)=>{const li=document.createElement('li');li.className=cls;
-      if(who){const w=document.createElement('span');w.className='who';w.textContent=who;li.append(w)}
-      li.append(t);lines.append(li)};
-    add('bot','Bookwyrm','Hey Dee! What\\'s up?');
-    add('you','You','What\\'s in quarantine right now?');
-    add('bot','Bookwyrm','Let me check the repo. Just one thing is in quarantine: the social media guidelines. Marketing owns it, but Marketing isn\\'t in the teams list yet, so Archivist didn\\'t know where to put it.');
-    add('you','You','Who leads Marketing?');
-    add('bot','Bookwyrm','The bundle doesn\\'t say. Do you know? If you give me a name, I\\'ll draft the change and show it to you first.');
-    mute.hidden=false; type.hidden=false; hangup.hidden=false;` },
-  "4-incoming": { shape: "open", js: `
-    document.body.dataset.state='ringing'; document.body.dataset.shape='open';
-    document.getElementById('status').textContent='Calling you…'; reason.textContent='New in quarantine: vendor-onboarding-notes.md'; reason.hidden=false;
-    answer.hidden=false; decline.hidden=false;` },
-  "5-ended-typing": { shape: "open", js: `
-    document.body.dataset.state='idle'; document.body.dataset.shape='open';
-    document.getElementById('status').textContent='Call ended';
-    const li=document.createElement('li'); li.className='note'; li.textContent='Call ended after 3:12.'; lines.append(li);
-    answer.textContent='Call again'; decline.textContent='Close'; answer.hidden=false; decline.hidden=false; type.hidden=false;
-    document.getElementById('type-form').hidden=false; document.getElementById('type-input').value='Draft the Marketing team entry';` },
+const ROBOT = { width: 76, height: 76 };
+const OPEN = { width: 394, height: 540 };
+
+const card = (js) => `document.body.dataset.shape='open'; document.body.dataset.side='left'; document.body.dataset.v='up'; ${js}`;
+const bubble = (cls, t) => `{const li=document.createElement('li');li.className='${cls}';li.textContent=${JSON.stringify(t)};lines.append(li)}`;
+
+const COMPANION = {
+  "robot-idle": { size: ROBOT, js: `document.body.dataset.state='idle'` },
+  "robot-idle-dark": { size: ROBOT, dark: true, js: `document.body.dataset.state='idle'` },
+  "robot-listening": { size: ROBOT, js: `document.body.dataset.state='listening'` },
+  "robot-thinking": { size: ROBOT, js: `document.body.dataset.state='thinking'` },
+  "card-ringing": { size: OPEN, js: card(`document.body.dataset.state='ringing'; status.textContent='Calling…'; hangup.hidden=false;`) },
+  "card-on-call": { size: OPEN, js: card(`
+    document.body.dataset.state='speaking'; document.body.style.setProperty('--level','0.7'); status.textContent='1:42';
+    ${bubble("bot", "Hey Dee! What's up?")}
+    ${bubble("you", "What's in quarantine right now?")}
+    ${bubble("bot", "Just one thing: the social media guidelines. Marketing owns it, but Marketing isn't in the teams list yet, so Archivist didn't know where to put it.")}
+    ${bubble("you", "Who leads Marketing?")}
+    ${bubble("bot", "The bundle doesn't say. Do you know? Give me a name and I'll draft the change for you to look at first.")}
+    mute.hidden=false; type.hidden=false; expand.hidden=false; hangup.hidden=false;`) },
+  "card-on-call-dark": { size: OPEN, dark: true, js: card(`
+    document.body.dataset.state='listening'; status.textContent='0:37';
+    ${bubble("bot", "Hey Dee! What's up?")}
+    ${bubble("you", "Any new gaps since Friday?")}
+    ${bubble("bot", "Two. The weekly on-call handoff is missing its rollback section, and the post-incident review has no owner.")}
+    mute.hidden=false; mute.setAttribute('aria-pressed','true'); type.hidden=false; expand.hidden=false; hangup.hidden=false;`) },
+  "card-incoming": { size: OPEN, js: card(`
+    document.body.dataset.state='ringing'; title.textContent='Bookwyrm'; status.textContent='Bookwyrm is calling you';
+    reason.textContent='New in quarantine: vendor-onboarding-notes.md'; reason.hidden=false; answer.hidden=false; decline.hidden=false;`) },
+  "card-message": { size: OPEN, js: card(`
+    document.body.dataset.state='idle'; status.textContent='Message';
+    ${bubble("you", "Is the phishing runbook up to date?")}
+    ${bubble("bot", "Mostly. It was last changed in August, but it still names the old security on-call alias. Want me to draft the fix?")}
+    expand.hidden=false; document.getElementById('type-form').hidden=false;`) },
 };
 
+const WINDOW = {
+  "window-chat": { js: `document.querySelector('.conv')?.click()` },
+  "window-new": { js: `document.getElementById('nav-new').click()` },
+  "window-library": { js: `document.getElementById('nav-library').click()` },
+  "window-settings": { js: `document.getElementById('nav-settings').click()` },
+  "window-chat-dark": { dark: true, js: `document.querySelector('.conv')?.click()` },
+};
+
+// loadFile can be aborted by a previous window going away; just try again.
+async function load(win, file) {
+  for (let i = 0; i < 5; i++) {
+    try { await win.loadFile(path.join(__dirname, "..", "renderer", file)); return; }
+    catch { await new Promise((r) => setTimeout(r, 300)); }
+  }
+}
+
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({
-    ...SIZES.open, show: false, frame: false, useContentSize: true,
-    webPreferences: { preload: path.join(__dirname, "..", "preload.js"), contextIsolation: true },
-  });
-  for (const [name, scene] of Object.entries(SCENES)) {
-    win.setContentSize(SIZES[scene.shape].width, SIZES[scene.shape].height);
-    for (let i = 0; i < 3; i++) {
-      try { await win.loadFile(path.join(__dirname, "..", "renderer", "index.html")); break; }
-      catch (e) { await new Promise((r) => setTimeout(r, 300)); }
-    }
+  const prefs = { preload: path.join(__dirname, "..", "preload.js"), contextIsolation: true };
+  let win = new BrowserWindow({ ...ROBOT, useContentSize: true, show: false, frame: false, webPreferences: prefs });
+  for (const [name, scene] of Object.entries(COMPANION)) {
+    nativeTheme.themeSource = scene.dark ? "dark" : "light";
+    win.setContentSize(scene.size.width, scene.size.height);
+    await load(win, "index.html");
     await win.webContents.insertCSS(DESKTOP + " *{animation-play-state:paused!important}");
-    await win.webContents.executeJavaScript(`(()=>{${scene.js}})()`);
-    await new Promise((r) => setTimeout(r, 700));
-    const img = await win.webContents.capturePage();
-    fs.writeFileSync(path.join(out, `${name}.png`), img.toPNG());
+    await win.webContents.executeJavaScript(`(()=>{const $=(i)=>document.getElementById(i);
+      const [status,lines,reason,mute,type,expand,hangup,answer,decline,title]=['status','lines','reason','mute','type','expand','hangup','answer','decline','title'].map($);
+      ${scene.js}})()`);
+    await new Promise((r) => setTimeout(r, 500));
+    fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+    console.log("shot", name);
+  }
+  win.setContentSize(1040, 680);
+  for (const [name, scene] of Object.entries(WINDOW)) {
+    nativeTheme.themeSource = scene.dark ? "dark" : "light";
+    await load(win, "window.html");
+    await win.webContents.insertCSS(MATERIAL);
+    await new Promise((r) => setTimeout(r, 1200));
+    await win.webContents.executeJavaScript(scene.js);
+    await new Promise((r) => setTimeout(r, name.includes("library") ? 3500 : 1500));
+    fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+    console.log("shot", name);
   }
   app.quit();
 });

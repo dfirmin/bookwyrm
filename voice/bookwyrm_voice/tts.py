@@ -48,16 +48,36 @@ class Kokoro:
     """The loaded Kokoro model, shared by every call in the process (loading takes seconds)."""
 
     def __init__(self, model_dir: Path, voice: str = "af_heart", threads: int = 4):
-        ids = voice_ids(model_dir)
-        if voice not in ids:
-            raise ValueError(f"Kokoro has no voice {voice!r}; choose one of: {', '.join(sorted(ids))}")
-        self.voice, self.sid = voice, ids[voice]
+        self.ids = voice_ids(model_dir)
+        self.set_voice(voice)
         self.engine = load_kokoro(model_dir, threads)
         self._lock = threading.Lock()
 
-    def generate(self, text: str, speed: float):
+    def set_voice(self, voice: str):
+        """Switch voice for the next sentence (same model; nothing to reload)."""
+        if voice not in self.ids:
+            raise ValueError(f"Kokoro has no voice {voice!r}; choose one of: {', '.join(sorted(self.ids))}")
+        self.voice, self.sid = voice, self.ids[voice]
+
+    def generate(self, text: str, speed: float, voice: str | None = None):
+        sid = self.ids[voice] if voice else self.sid
         with self._lock:
-            return self.engine.generate(text, sid=self.sid, speed=speed)
+            return self.engine.generate(text, sid=sid, speed=speed)
+
+
+# Kokoro's English voices: prefix a = American, b = British; f/m = female/male.
+_ACCENT = {"a": "American", "b": "British"}
+_GENDER = {"f": "female", "m": "male"}
+
+
+def english_voices(ids: dict[str, int]) -> list[dict]:
+    out = []
+    for name in sorted(ids):
+        prefix, _, given = name.partition("_")
+        if len(prefix) == 2 and prefix[0] in _ACCENT and prefix[1] in _GENDER and given:
+            out.append({"id": name, "label": given.capitalize(),
+                        "detail": f"{_ACCENT[prefix[0]]}, {_GENDER[prefix[1]]}"})
+    return out
 
 
 class KokoroSherpaTTSService(TTSService):

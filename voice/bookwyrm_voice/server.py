@@ -1,14 +1,28 @@
-"""The local call server the Bookwyrm companion app talks to.
+"""The local server the Bookwyrm app talks to (127.0.0.1 only).
 
-    POST  /api/offer       start a call (WebRTC offer in, answer out); request_data may carry
-                           {"reason": {...}} when Bookwyrm placed the call
-    PATCH /api/offer       trickle ICE candidates
-    POST  /api/chat        typed chat when not on a call: {"text", "session_id"?} -> streamed text
-    POST  /api/warmup      while the phone rings: wake Hermes so the first answer isn't a cold start
-    GET   /api/events      server-sent events: incoming calls from Bookwyrm (when enabled)
-    GET   /api/prefs       {"calls_you": bool, "watch_configured": bool}
-    POST  /api/prefs       {"calls_you": bool}
-    GET   /health          is Hermes reachable, are the speech models loaded
+Calls
+    POST   /api/offer            start a call (WebRTC offer in, answer out). request_data may carry
+                                 {"reason": {...}} when Bookwyrm placed the call, and
+                                 {"session_id": "..."} to carry on an earlier conversation by voice
+    PATCH  /api/offer            trickle ICE candidates
+    POST   /api/warmup           while the phone rings: wake Hermes so the first answer isn't cold
+    GET    /api/events           server-sent events: incoming calls from Bookwyrm (when enabled)
+Typed chat and history
+    POST   /api/chat             {"text", "session_id"?, "surface": "card"|"window"} -> streamed text
+    GET    /api/history          conversations, newest first
+    GET    /api/history/{id}     one conversation's messages
+    PATCH  /api/history/{id}     {"title"}
+    DELETE /api/history/{id}
+The repo
+    GET    /api/library          open quarantine and gap issues, open Bookwyrm pull requests
+Settings
+    GET    /api/settings         the settings the app shows (no secrets)
+    PUT    /api/settings         change name, team, voice, voice_speed, calls_you, watch_minutes
+    POST   /api/settings/reload  re-read settings.json and the profile .env (after setup ran)
+    GET    /api/voices           Kokoro's English voices
+    POST   /api/voices/preview   {"voice", "speed"} -> a short WAV sample
+    GET    /api/prefs, POST /api/prefs   (older app builds: {"calls_you"})
+    GET    /health               is Hermes reachable, are the speech models loaded
 
 Run:  python -m bookwyrm_voice.server
 """
@@ -16,14 +30,19 @@ Run:  python -m bookwyrm_voice.server
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import time
+import uuid
+import wave
 from contextlib import asynccontextmanager
 
 import httpx
+import numpy as np
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from loguru import logger
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.request_handler import (
@@ -34,20 +53,45 @@ from pipecat.transports.smallwebrtc.request_handler import (
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
-from .config import load_settings
+from .config import EDITABLE, Settings, load_settings, save_settings
+from .history import History, context_text
 from .pipeline import Engines, build_call, greet
-from .watch import Reason, Watcher, load_prefs, save_prefs
+from .tts import english_voices
+from .watch import Reason, Watcher, classify
 
-settings = load_settings()
-state: dict = {"engines": None, "watcher": None, "loading": True, "error": None}
+_settings: Settings = load_settings()
+state: dict = {"engines": None, "watcher": None, "loading": True, "error": None, "history": None}
 webrtc = SmallWebRTCRequestHandler()
+
+
+def cfg() -> Settings:
+    return _settings
+
+
+def _reload() -> Settings:
+    global _settings
+    _settings = load_settings()
+    engines: Engines | None = state["engines"]
+    if engines is not None:
+        engines.settings = _settings
+        try:
+            engines.kokoro.set_voice(_settings.voice)
+        except ValueError as e:
+            logger.warning(str(e))
+    return _settings
+
+
+def history() -> History:
+    if state["history"] is None:
+        state["history"] = History()
+    return state["history"]
 
 
 async def _load_engines():
     logger.info("Loading speech models (first run downloads ~1 GB from GitHub)…")
     try:
-        state["engines"] = await asyncio.to_thread(Engines, settings)
-        logger.info(f"Ready. Hermes at {settings.hermes_url}; voice {settings.voice}")
+        state["engines"] = await asyncio.to_thread(Engines, cfg())
+        logger.info(f"Ready. Hermes at {cfg().hermes_url}; voice {cfg().voice}")
     except Exception as e:
         state["error"] = f"{type(e).__name__}: {e}"
         logger.exception("Could not load the speech models")
@@ -59,7 +103,7 @@ async def _load_engines():
 async def lifespan(app: FastAPI):
     # Answer /health straight away; the models load in the background and /health says so.
     loader = asyncio.create_task(_load_engines())
-    w = Watcher(settings.watch_repo, settings.watch_token, settings.watch_minutes)
+    w = Watcher(cfg)
     w.start()
     state["watcher"] = w
     yield
@@ -69,43 +113,80 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-# The app's renderer is a local page; only this machine can reach 127.0.0.1 anyway.
+# The app's pages are local files; only this machine can reach 127.0.0.1 anyway.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
                    expose_headers=["x-session-id"])
 
 
-async def _run_call(connection, reason: Reason | None):
+def _auth() -> dict:
+    return {"Authorization": f"Bearer {cfg().hermes_key}"}
+
+
+# ---- calls ----------------------------------------------------------------------------------------
+
+async def _run_call(connection, reason: Reason | None, session_id: str | None):
+    settings = cfg()
     transport = SmallWebRTCTransport(
         webrtc_connection=connection,
         params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
     )
-    call = build_call(transport, settings, state["engines"], greet=False,
-                      instructions_extra=reason.instructions if reason else "")
+    earlier = history().get(session_id) if session_id else None
+    extra = reason.instructions if reason else ""
+    if earlier:
+        extra += ("\n\nThis call carries on a conversation you were already having in the Bookwyrm app; "
+                  "you remember it. Don't start over.")
+    call = build_call(transport, settings, state["engines"], greet=False, session_id=session_id,
+                      instructions_extra=extra)
 
     @transport.event_handler("on_client_connected")
     async def _connected(transport, client):  # noqa: ARG001
-        await greet(call, reason.greeting if reason else settings.greeting)
+        hello = reason.greeting if reason else ("I'm here. Go ahead." if earlier else settings.greeting)
+        await greet(call, hello)
 
     @transport.event_handler("on_client_disconnected")
     async def _hung_up(transport, client):  # noqa: ARG001
         await call.task.cancel()
 
-    await WorkerRunner(handle_sigint=False).run(call.task)
-    logger.info(f"Call ended (Hermes session {call.llm.session_id})")
+    try:
+        await WorkerRunner(handle_sigint=False).run(call.task)
+    finally:
+        _record_call(call, reason, kind=earlier["kind"] if earlier else "call")
+        logger.info(f"Call ended (Hermes session {call.llm.session_id})")
+
+
+def _record_call(call, reason: Reason | None, kind: str):
+    """What was said, as Pipecat kept it: interrupted answers are cut where the caller cut in."""
+    try:
+        # Pipecat keeps each spoken stretch as its own message; join a speaker's run into one turn.
+        turns: list[list] = []
+        for m in call.context.get_messages():
+            role = m.get("role") if isinstance(m, dict) else None
+            text = context_text(m).strip() if role in ("user", "assistant") else ""
+            if not text:
+                continue
+            if turns and turns[-1][0] == role:
+                turns[-1][1] += " " + text
+            else:
+                turns.append([role, text])
+        h = history()
+        for role, text in turns:
+            h.add(call.llm.session_id, kind, role, text, via="voice", reason=reason.headline if reason else None)
+    except Exception:
+        logger.exception("Couldn't save the call to history")
 
 
 @app.post("/api/offer")
 async def offer(request: Request, background: BackgroundTasks):
     if state["engines"] is None:
-        from fastapi import HTTPException
         raise HTTPException(503, state["error"] or "Bookwyrm is still loading its voice.")
     body = await request.json()
     req = SmallWebRTCRequest.from_dict(body)
-    data = req.request_data or {}
-    reason = Reason(**data["reason"]) if isinstance(data, dict) and data.get("reason") else None
+    data = req.request_data if isinstance(req.request_data, dict) else {}
+    reason = Reason(**data["reason"]) if data.get("reason") else None
+    session_id = data.get("session_id") or None
 
     async def on_connection(connection):
-        background.add_task(_run_call, connection, reason)
+        background.add_task(_run_call, connection, reason, session_id)
 
     return await webrtc.handle_web_request(request=req, webrtc_connection_callback=on_connection)
 
@@ -116,51 +197,223 @@ async def ice(request: Request):
     return {"ok": True}
 
 
-@app.post("/api/chat")
-async def chat(request: Request):
-    """Typed conversation with Bookwyrm outside a call: same Hermes profile, written replies."""
-    import uuid
-    body = await request.json()
-    text = (body.get("text") or "").strip()
-    session_id = body.get("session_id") or f"text-{uuid.uuid4().hex[:12]}"
-    headers = {"Authorization": f"Bearer {settings.hermes_key}"}
-    instructions = (
-        "You're chatting by text in the Bookwyrm desktop app's small call card. Keep replies short; "
-        "plain sentences, no headings or tables."
-        + (f" You're talking with {settings.caller}; the app on their own machine is signed in as them." if settings.caller else "")
-    )
-
-    async def stream():
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180, connect=5)) as c:
-            try:
-                r = await c.post(f"{settings.hermes_url}/runs", headers=headers,
-                                 json={"input": text, "session_id": session_id, "instructions": instructions})
-                r.raise_for_status()
-                run_id = r.json()["run_id"]
-                async with c.stream("GET", f"{settings.hermes_url}/runs/{run_id}/events", headers=headers) as s:
-                    async for line in s.aiter_lines():
-                        if not line.startswith("data:"):
-                            continue
-                        ev = json.loads(line[5:])
-                        if ev.get("event") == "message.delta" and ev.get("delta"):
-                            yield ev["delta"]
-                        elif ev.get("event") in ("run.completed", "run.failed", "run.cancelled", "run.interrupted"):
-                            break
-            except httpx.ConnectError:
-                yield "I can't reach my notes right now. Is Hermes running on this machine?"
-
-    return StreamingResponse(stream(), media_type="text/plain; charset=utf-8", headers={"x-session-id": session_id})
-
-
 @app.post("/api/warmup")
 async def warmup():
     # A tiny Hermes request wakes the gateway and the provider connection while the phone rings.
     try:
         async with httpx.AsyncClient(timeout=5) as c:
-            await c.get(f"{settings.hermes_url}/models", headers={"Authorization": f"Bearer {settings.hermes_key}"})
+            await c.get(f"{cfg().hermes_url}/models", headers=_auth())
     except Exception:
         pass
     return {"ok": True}
+
+
+# ---- typed chat and history -----------------------------------------------------------------------
+
+_CHAT_STYLE = {
+    "card": ("You're chatting by text in the Bookwyrm companion's small card. Keep replies short; "
+             "plain sentences, no headings or tables."),
+    "window": ("You're chatting by text in the Bookwyrm app window. Markdown is fine (short lists, "
+               "links to files and pull requests, code spans for paths); keep answers focused."),
+}
+
+
+@app.post("/api/chat")
+async def chat(request: Request):
+    """Typed conversation with Bookwyrm: same Hermes profile, written replies, saved to history."""
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "Nothing to send.")
+    session_id = body.get("session_id") or f"text-{uuid.uuid4().hex[:12]}"
+    settings = cfg()
+    instructions = _CHAT_STYLE.get(body.get("surface"), _CHAT_STYLE["card"])
+    if settings.caller:
+        instructions += f" You're talking with {settings.caller}; the app on their own machine is signed in as them."
+    h = history()
+    kind = (h.get(session_id) or {}).get("kind", "chat")
+    h.add(session_id, kind, "user", text, via="text")
+
+    async def stream():
+        reply: list[str] = []
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300, connect=5)) as c:
+            try:
+                r = await c.post(f"{settings.hermes_url}/runs", headers=_auth(),
+                                 json={"input": text, "session_id": session_id, "instructions": instructions})
+                r.raise_for_status()
+                run_id = r.json()["run_id"]
+                async with c.stream("GET", f"{settings.hermes_url}/runs/{run_id}/events", headers=_auth()) as s:
+                    async for line in s.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        ev = json.loads(line[5:])
+                        kind_ = ev.get("event")
+                        if kind_ == "message.delta" and ev.get("delta"):
+                            reply.append(ev["delta"])
+                            yield ev["delta"]
+                        elif kind_ == "tool.started":
+                            # A marker the window shows as "Checking the repo…"; the card ignores it.
+                            yield "⁣"
+                        elif kind_ in ("run.completed", "run.failed", "run.cancelled", "run.interrupted"):
+                            if kind_ == "run.failed" and not reply:
+                                msg = "Something went wrong on my end. Try again?"
+                                reply.append(msg)
+                                yield msg
+                            break
+            except httpx.ConnectError:
+                msg = "I can't reach my notes right now. Is Hermes running on this machine?"
+                reply.append(msg)
+                yield msg
+            except httpx.HTTPStatusError as e:
+                msg = f"Hermes said no ({e.response.status_code}). Check Bookwyrm's setup."
+                reply.append(msg)
+                yield msg
+            finally:
+                h.add(session_id, kind, "assistant", "".join(reply), via="text")
+
+    return StreamingResponse(stream(), media_type="text/plain; charset=utf-8", headers={"x-session-id": session_id})
+
+
+@app.get("/api/history")
+async def list_history():
+    return history().conversations()
+
+
+@app.get("/api/history/{conv}")
+async def get_history(conv: str):
+    c = history().get(conv)
+    if not c:
+        raise HTTPException(404, "No such conversation.")
+    return {**c, "messages": history().messages(conv)}
+
+
+@app.patch("/api/history/{conv}")
+async def rename_history(conv: str, request: Request):
+    title = ((await request.json()).get("title") or "").strip()
+    if title:
+        history().rename(conv, title)
+    return {"ok": True}
+
+
+@app.delete("/api/history/{conv}")
+async def delete_history(conv: str):
+    history().delete(conv)
+    return {"ok": True}
+
+
+# ---- the repo -------------------------------------------------------------------------------------
+
+@app.get("/api/library")
+async def library():
+    """What needs the owner: quarantined drafts, gaps, and Bookwyrm's open pull requests."""
+    s = cfg()
+    if not (s.repo and s.github_token):
+        return {"repo": s.repo, "error": "Bookwyrm needs a knowledge repo and a GitHub token. Run setup again."}
+    headers = {"Authorization": f"Bearer {s.github_token}", "Accept": "application/vnd.github+json"}
+    base = f"https://api.github.com/repos/{s.repo}"
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            issues_r, pulls_r = await asyncio.gather(
+                c.get(f"{base}/issues", params={"state": "open", "per_page": 100}, headers=headers),
+                c.get(f"{base}/pulls", params={"state": "open", "per_page": 50}, headers=headers),
+            )
+        issues_r.raise_for_status()
+        pulls_r.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        return {"repo": s.repo, "error": f"GitHub answered {e.response.status_code}. Is the token still valid for {s.repo}?"}
+    except httpx.HTTPError as e:
+        return {"repo": s.repo, "error": f"Couldn't reach GitHub: {type(e).__name__}"}
+
+    def item(i: dict) -> dict:
+        return {"number": i["number"], "title": i["title"], "url": i["html_url"],
+                "created": i.get("created_at"), "labels": [lbl["name"] for lbl in i.get("labels", [])]}
+
+    quarantine, gaps, other = [], [], []
+    for i in issues_r.json():
+        r = classify(i)
+        if "pull_request" in i:
+            continue
+        (quarantine if r and r.kind == "quarantine" else gaps if r else other).append(item(i))
+    def by(branch: str) -> str:
+        return next((who for who in ("bookwyrm", "archivist") if branch.startswith(who + "/")), "people")
+
+    prs = [{**item(p), "branch": p["head"]["ref"], "by": by(p["head"]["ref"]), "draft": p.get("draft", False)}
+           for p in pulls_r.json()]
+    return {"repo": s.repo, "url": f"https://github.com/{s.repo}", "quarantine": quarantine, "gaps": gaps,
+            "other_issues": other, "pulls": prs, "checked": time.time()}
+
+
+# ---- settings -------------------------------------------------------------------------------------
+
+@app.get("/api/settings")
+async def get_settings():
+    return cfg().public()
+
+
+@app.put("/api/settings")
+async def put_settings(request: Request):
+    body = await request.json()
+    updates = {k: body[k] for k in EDITABLE if k in body}
+    if "voice_speed" in updates:
+        updates["voice_speed"] = min(1.4, max(0.7, float(updates["voice_speed"])))
+    if "watch_minutes" in updates:
+        updates["watch_minutes"] = min(120.0, max(1.0, float(updates["watch_minutes"])))
+    for k in ("name", "team"):
+        if k in updates:
+            updates[k] = str(updates[k]).strip()[:80]
+    engines: Engines | None = state["engines"]
+    if "voice" in updates and engines is not None and updates["voice"] not in engines.kokoro.ids:
+        raise HTTPException(400, f"Unknown voice {updates['voice']!r}")
+    save_settings(updates)
+    return _reload().public()
+
+
+@app.post("/api/settings/reload")
+async def reload_settings():
+    return _reload().public()
+
+
+@app.get("/api/voices")
+async def voices():
+    engines: Engines | None = state["engines"]
+    if engines is None:
+        return {"voices": [], "current": cfg().voice, "loading": True}
+    return {"voices": english_voices(engines.kokoro.ids), "current": engines.kokoro.voice}
+
+
+@app.post("/api/voices/preview")
+async def preview(request: Request):
+    engines: Engines | None = state["engines"]
+    if engines is None:
+        raise HTTPException(503, "Still loading the voices.")
+    body = await request.json()
+    voice = body.get("voice") or engines.kokoro.voice
+    if voice not in engines.kokoro.ids:
+        raise HTTPException(400, f"Unknown voice {voice!r}")
+    speed = float(body.get("speed") or cfg().voice_speed)
+    first = cfg().first_name
+    text = f"Hey{' ' + first if first else ''}! This is how I'd sound. Want to try another one?"
+    audio = await asyncio.to_thread(engines.kokoro.generate, text, speed, voice)
+    pcm = (np.clip(np.asarray(audio.samples, dtype=np.float32), -1, 1) * 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(audio.sample_rate)
+        w.writeframes(pcm.tobytes())
+    return Response(buf.getvalue(), media_type="audio/wav")
+
+
+@app.get("/api/prefs")
+async def get_prefs():
+    return {"calls_you": cfg().calls_you, "watch_configured": state["watcher"].configured}
+
+
+@app.post("/api/prefs")
+async def set_prefs(request: Request):
+    body = await request.json()
+    if "calls_you" in body:
+        save_settings({"calls_you": bool(body["calls_you"])})
+        _reload()
+    return await get_prefs()
 
 
 @app.get("/api/events")
@@ -187,34 +440,23 @@ async def events():
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
-@app.get("/api/prefs")
-async def get_prefs():
-    return {**load_prefs(), "watch_configured": state["watcher"].configured}
-
-
-@app.post("/api/prefs")
-async def set_prefs(request: Request):
-    prefs = {**load_prefs(), **{k: v for k, v in (await request.json()).items() if k in ("calls_you",)}}
-    save_prefs(prefs)
-    return prefs
-
-
 @app.get("/health")
 async def health():
     hermes = False
     try:
         async with httpx.AsyncClient(timeout=3) as c:
-            r = await c.get(f"{settings.hermes_url}/models", headers={"Authorization": f"Bearer {settings.hermes_key}"})
+            r = await c.get(f"{cfg().hermes_url}/models", headers=_auth())
             hermes = r.status_code == 200
     except Exception:
         pass
     return {"ok": hermes and state["engines"] is not None, "hermes": hermes,
             "models": state["engines"] is not None, "loading": state["loading"],
-            "error": state["error"], "voice": settings.voice}
+            "error": state["error"], "voice": cfg().voice}
 
 
 def main():
-    uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning")
+    s = cfg()
+    uvicorn.run(app, host=s.host, port=s.port, log_level="warning")
 
 
 if __name__ == "__main__":

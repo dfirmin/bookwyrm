@@ -1,0 +1,27 @@
+{
+  "name": "bookwyrm-setup",
+  "version": "0.1.0",
+  "description": "Bookwyrm installer: a friendly terminal wizard",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "bin": { "bookwyrm-setup": "dist/setup.mjs" },
+  "scripts": {
+    "build": "esbuild src/main.jsx --bundle --platform=node --format=esm --target=node22 --packages=external --jsx=automatic --outfile=dist/setup.mjs --log-level=warning",
+    "postinstall": "npm run build",
+    "start": "npm run build && node dist/setup.mjs",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "ink": "^8.0.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

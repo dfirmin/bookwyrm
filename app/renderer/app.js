@@ -1,13 +1,15 @@
-// Bookwyrm companion renderer: the dragon, the ring, the call card.
+// Bookwyrm companion: the robot, its menu, the ring and the call card.
 import { Call } from "./call.js";
+import { applyOs } from "./os.js";
 import "./app.css";
 
 const $ = (id) => document.getElementById(id);
 const body = document.body;
+const bw = window.bookwyrm;
 const ui = {
-  dragon: $("dragon"), status: $("status"), stamp: $("stamp"), reason: $("reason"), lines: $("lines"),
-  typeForm: $("type-form"), typeInput: $("type-input"), badge: $("badge"), remote: $("remote"),
-  answer: $("answer"), decline: $("decline"), mute: $("mute"), type: $("type"), hangup: $("hangup"),
+  robot: $("robot"), title: $("title"), status: $("status"), reason: $("reason"), lines: $("lines"),
+  typeForm: $("type-form"), typeInput: $("type-input"), badge: $("badge"), remote: $("remote"), close: $("close"),
+  answer: $("answer"), decline: $("decline"), mute: $("mute"), type: $("type"), expand: $("expand"), hangup: $("hangup"),
 };
 
 const MIN_RING_MS = 1700;      // long enough to feel like a call being placed
@@ -15,37 +17,32 @@ const INCOMING_RING_MS = 25000;
 
 let voiceUrl = "http://127.0.0.1:7865";
 let client = null;
-let phase = "idle";            // idle | ringing | incoming | connecting | on-call | ended
+let phase = "idle";            // idle | ringing | incoming | connecting | on-call | ended | chat
 let callStarted = 0;
 let clock = null;
 let incomingReason = null;
 let missed = 0;
 let botLine = null;
-let textSession = null;
+let session = null;            // the Hermes session (and history entry) the card is showing
 
 // ---------------------------------------------------------------- small helpers
 
 function setState(s) { body.dataset.state = s; }
-function setShape(s) { body.dataset.shape = s; window.bookwyrm.setShape(s); }
+function setShape(s) { body.dataset.shape = s; bw.setShape(s); }
 function show(...els) { els.forEach((e) => (e.hidden = false)); }
 function hide(...els) { els.forEach((e) => (e.hidden = true)); }
 function status(text) { ui.status.textContent = text; }
+const newSession = (kind) => `${kind}-${crypto.randomUUID().slice(0, 12)}`;
 
-function line(who, text, cls) {
+function line(text, cls) {
   const li = document.createElement("li");
   li.className = cls;
-  if (who) {
-    const w = document.createElement("span");
-    w.className = "who";
-    w.textContent = who;
-    li.append(w);
-  }
   li.append(document.createTextNode(text));
   ui.lines.append(li);
   ui.lines.scrollTop = ui.lines.scrollHeight;
   return li;
 }
-const note = (text) => line(null, text, "note");
+const note = (text) => line(text, "note");
 
 function elapsed() {
   const s = Math.floor((Date.now() - callStarted) / 1000);
@@ -53,10 +50,10 @@ function elapsed() {
 }
 
 function controls(...visible) {
-  [ui.answer, ui.decline, ui.mute, ui.type, ui.hangup].forEach((b) => (b.hidden = !visible.includes(b)));
+  [ui.answer, ui.decline, ui.mute, ui.type, ui.expand, ui.hangup].forEach((b) => (b.hidden = !visible.includes(b)));
 }
 
-// ---------------------------------------------------------------- the ring: a small struck bell
+// ---------------------------------------------------------------- the ring: a soft two-note chime
 
 let audioCtx = null;
 let ringTimer = null;
@@ -66,16 +63,16 @@ function strike(at, freq) {
   const out = ctx.createGain();
   out.connect(ctx.destination);
   out.gain.setValueAtTime(0.0001, at);
-  out.gain.exponentialRampToValueAtTime(0.22, at + 0.01);
-  out.gain.exponentialRampToValueAtTime(0.0001, at + 1.1);
-  for (const [mult, amp] of [[1, 1], [2.76, 0.45], [5.4, 0.2]]) {   // bell-like partials
+  out.gain.exponentialRampToValueAtTime(0.18, at + 0.01);
+  out.gain.exponentialRampToValueAtTime(0.0001, at + 1.0);
+  for (const [mult, amp] of [[1, 1], [2.76, 0.35], [5.4, 0.12]]) {   // bell-like partials
     const o = ctx.createOscillator();
     const g = ctx.createGain();
     o.frequency.value = freq * mult;
     g.gain.value = amp;
     o.connect(g).connect(out);
     o.start(at);
-    o.stop(at + 1.2);
+    o.stop(at + 1.1);
   }
 }
 
@@ -84,7 +81,7 @@ function startRing() {
   const ding = () => {
     const t = audioCtx.currentTime + 0.02;
     strike(t, 880);
-    strike(t + 0.22, 740);
+    strike(t + 0.2, 740);
   };
   ding();
   ringTimer = setInterval(ding, 2000);
@@ -101,20 +98,20 @@ async function readyOrReason(maxWaitMs = 60000) {
   for (;;) {
     const problem = await preflight();
     if (problem !== WAKING || Date.now() > until) return problem;
-    status("Calling Bookwyrm… (waking up)");
+    status("Calling… (Bookwyrm is waking up)");
     await new Promise((r) => setTimeout(r, 1500));
     if (phase !== "ringing" && phase !== "connecting") return "cancelled";
   }
 }
 
 async function preflight() {
-  const h = await window.bookwyrm.health();
-  if (h?.down === "not-set-up") return "Bookwyrm's voice isn't set up on this Mac yet. Run scripts/setup-voice.sh, then restart the app.";
+  const h = await bw.health();
+  if (h?.down === "not-set-up") return "Bookwyrm's voice isn't set up on this computer yet. Run the Bookwyrm installer again.";
   if (h?.down === "starting" || h?.loading) return WAKING;
   if (h?.down === "stopped") return `Bookwyrm's voice service stopped. The end of its log (${h.log}):\n${h.detail || "(empty)"}`;
   if (h?.error) return `Bookwyrm couldn't load its voice: ${h.error}`;
   if (!h) return "Can't reach Bookwyrm's voice service.";
-  if (!h.hermes) return "Bookwyrm's brain isn't running. Run: hermes gateway restart";
+  if (!h.hermes) return "Bookwyrm's brain (Hermes) isn't running. Run: hermes gateway restart";
   return null;
 }
 
@@ -126,7 +123,7 @@ function handleMessage(type, data) {
     case "bot-stopped-speaking": setState("listening"); dropUnsaid(); botLine = null; break;
     case "user-started-speaking": setState("listening"); dropUnsaid(); botLine = null; break;
     case "user-transcription":
-      if (data.final && data.text?.trim()) { line("You", data.text.trim(), "you"); setState("thinking"); }
+      if (data.final && data.text?.trim()) { line(data.text.trim(), "you"); setState("thinking"); }
       break;
     case "bot-output": {
       // Each sentence arrives twice: "new" as Bookwyrm starts saying it, "completed" once said.
@@ -138,7 +135,7 @@ function handleMessage(type, data) {
         const pending = [...ui.lines.querySelectorAll("span.said.live")].find((s) => s.dataset.text === text);
         if (pending) { pending.classList.remove("live"); return; }
       }
-      if (!botLine) botLine = line("Bookwyrm", "", "bot");
+      if (!botLine) botLine = line("", "bot");
       const span = document.createElement("span");
       span.className = done ? "said" : "said live";
       span.dataset.text = text;
@@ -153,13 +150,14 @@ function handleMessage(type, data) {
 // Sentences queued but never spoken (Bookwyrm was interrupted) don't belong in the record.
 function dropUnsaid() {
   ui.lines.querySelectorAll("span.said.live").forEach((s) => s.remove());
+  ui.lines.querySelectorAll("li.bot").forEach((li) => { if (!li.textContent.trim()) li.remove(); });
 }
 
 function newCall(reason) {
   let level = 0;
   return new Call({
     url: voiceUrl,
-    requestData: reason ? { reason } : {},
+    requestData: { session_id: session, ...(reason ? { reason } : {}) },
     onMessage: handleMessage,
     onLevel: (l) => {
       level = level * 0.6 + Math.min(1, l * 6) * 0.4;   // smooth, so the mouth doesn't flicker
@@ -169,15 +167,18 @@ function newCall(reason) {
   });
 }
 
-async function placeCall(reason = null) {
+// `continueSession` carries on a conversation from the Bookwyrm window by voice.
+async function placeCall(reason = null, continueSession = null) {
+  if (client) return;
   phase = reason ? "connecting" : "ringing";
+  session = continueSession || newSession("voice");
   setShape("open");
-  ui.lines.replaceChildren();
-  hide(ui.stamp, ui.typeForm);
+  if (!continueSession) ui.lines.replaceChildren();
+  hide(ui.typeForm);
   ui.reason.hidden = !reason;
   if (reason) ui.reason.textContent = reason.headline;
   setState("ringing");
-  status(reason ? "Connecting…" : "Calling Bookwyrm…");
+  status(reason ? "Connecting…" : "Calling…");
   controls(ui.hangup);
   if (!reason) startRing();
 
@@ -191,6 +192,7 @@ async function placeCall(reason = null) {
   try {
     await client.start(ui.remote);
   } catch (e) {
+    client = null;
     stopRing();
     fail(`Couldn't connect the call: ${e?.message || e}`);
     return;
@@ -200,12 +202,11 @@ async function placeCall(reason = null) {
   stopRing();
   phase = "on-call";
   callStarted = Date.now();
-  ui.stamp.textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  show(ui.stamp);
   setState("listening");
-  status("On a call · 0:00");
-  clock = setInterval(() => status(`On a call · ${elapsed()}`), 1000);
-  controls(ui.mute, ui.type, ui.hangup);
+  status("0:00");
+  clock = setInterval(() => status(elapsed()), 1000);
+  controls(ui.mute, ui.type, ui.expand, ui.hangup);
+  bw.callState(true);
 }
 
 async function endCall(why = null) {
@@ -216,14 +217,14 @@ async function endCall(why = null) {
   if (client) { client.hangup(); client = null; }
   setState("idle");
   body.style.setProperty("--level", 0);
-  if (was === "on-call") note(`${why ? why + " " : ""}Call ended after ${elapsed()}.`);
+  if (was === "on-call") note(`${why ? why + " " : ""}Call ended · ${elapsed()}`);
   status(was === "on-call" ? "Call ended" : "Call cancelled");
-  ui.mute.setAttribute("aria-pressed", "false");
-  ui.answer.textContent = "Call again";
-  ui.decline.textContent = "Close";
-  controls(ui.answer, ui.decline, ui.type);
+  setMuted(false);
+  phase = "chat";                     // what was said stays; type to carry on, or call again
+  controls(ui.type, ui.expand, ui.answer);
   hide(ui.typeForm);
   incomingReason = null;
+  bw.callState(false);
 }
 
 function fail(message) {
@@ -231,34 +232,39 @@ function fail(message) {
   setState("idle");
   status("Couldn't place the call");
   note(message);
-  ui.answer.textContent = "Try again";
-  ui.decline.textContent = "Close";
-  controls(ui.answer, ui.decline);
+  controls();
 }
 
 function closeCard() {
+  if (phase === "on-call" || phase === "ringing" || phase === "connecting") endCall();
+  if (phase === "incoming") { stopRing(); incomingReason = null; }
   phase = "idle";
   setShape("docked");
   setState("idle");
   status("Ready when you are");
 }
 
+function setMuted(muted) {
+  client?.setMuted(muted);
+  ui.mute.setAttribute("aria-pressed", String(muted));
+  ui.mute.setAttribute("aria-label", muted ? "Unmute" : "Mute");
+  ui.mute.title = muted ? "Unmute" : "Mute";
+}
+
 // ---------------------------------------------------------------- incoming calls (opt-in)
 
 function incoming(reason) {
-  if (phase !== "idle" && phase !== "ended") return;   // already busy: Bookwyrm will try another time
+  if (!["idle", "ended", "chat"].includes(phase)) return;   // busy: Bookwyrm will try another time
   incomingReason = reason;
   phase = "incoming";
   setShape("open");
   ui.lines.replaceChildren();
-  hide(ui.stamp, ui.typeForm);
+  hide(ui.typeForm);
   ui.reason.textContent = reason.headline;
   show(ui.reason);
   setState("ringing");
-  status("Calling you…");
-  ui.answer.textContent = "Answer";
-  ui.decline.textContent = "Not now";
-  controls(ui.answer, ui.decline);
+  status("Bookwyrm is calling you");
+  controls(ui.decline, ui.answer);
   startRing();
   setTimeout(() => { if (phase === "incoming") missedCall(); }, INCOMING_RING_MS);
 }
@@ -268,7 +274,6 @@ function missedCall() {
   missed += 1;
   ui.badge.textContent = String(missed);
   show(ui.badge);
-  note(`Missed call: ${incomingReason?.headline ?? "Bookwyrm"}`);
   incomingReason = null;
   closeCard();
 }
@@ -281,63 +286,133 @@ function listenForIncoming() {
 
 // ---------------------------------------------------------------- typing
 
+function openChat() {
+  if (phase === "on-call") { showTyping(); return; }
+  phase = "chat";
+  session = newSession("text");
+  ui.lines.replaceChildren();
+  hide(ui.reason);
+  setShape("open");
+  setState("idle");
+  status("Message");
+  controls(ui.expand, ui.answer);
+  showTyping();
+}
+
+function showTyping() {
+  show(ui.typeForm);
+  hide(ui.type);
+  setTimeout(() => ui.typeInput.focus(), 50);
+}
+
 async function typed(text) {
-  line("You", text, "you");
+  line(text, "you");
   if (phase === "on-call" && client) {
     setState("thinking");
     client.sendText(text);
     return;
   }
-  // Not on a call: a text reply, no voice.
+  // Not on a call: a written reply, no voice.
+  if (phase !== "chat") { phase = "chat"; controls(ui.expand, ui.answer); }
   setState("thinking");
-  const li = line("Bookwyrm", "", "bot");
+  const li = line("", "bot thinking");
   try {
     const r = await fetch(`${voiceUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, session_id: textSession }),
+      body: JSON.stringify({ text, session_id: session, surface: "card" }),
     });
-    textSession = r.headers.get("x-session-id") || textSession;
+    session = r.headers.get("x-session-id") || session;
     const reader = r.body.getReader();
     const dec = new TextDecoder();
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      li.append(document.createTextNode(dec.decode(value, { stream: true })));
+      const chunk = dec.decode(value, { stream: true }).replace(/⁣/g, "");
+      if (chunk) { li.classList.remove("thinking"); li.append(document.createTextNode(chunk)); }
       ui.lines.scrollTop = ui.lines.scrollHeight;
     }
   } catch {
     li.append(document.createTextNode("I couldn't reach the voice service to answer that."));
   }
+  li.classList.remove("thinking");
+  li.textContent = li.textContent.trim();
   setState("idle");
 }
 
-// ---------------------------------------------------------------- wiring
+// ---------------------------------------------------------------- the robot: click for the menu, drag to move
 
-ui.dragon.addEventListener("click", () => {
-  if (missed) { missed = 0; hide(ui.badge); }
-  if (phase === "idle") placeCall();
-  else if (phase === "incoming") ui.answer.click();
-  else if (phase === "ended") closeCard();
+let press = null;   // {x, y, dragging}
+
+ui.robot.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  press = { x: e.screenX, y: e.screenY, dragging: false };
+  ui.robot.setPointerCapture(e.pointerId);
 });
-ui.dragon.addEventListener("contextmenu", (e) => { e.preventDefault(); window.bookwyrm.dragonMenu(); });
+ui.robot.addEventListener("pointermove", (e) => {
+  if (!press || press.dragging) return;
+  if (Math.hypot(e.screenX - press.x, e.screenY - press.y) > 4) {
+    press.dragging = true;
+    body.classList.add("dragging");
+    bw.dragStart();
+  }
+});
+ui.robot.addEventListener("pointerup", (e) => {
+  if (!press) return;
+  const wasDrag = press.dragging;
+  press = null;
+  ui.robot.releasePointerCapture(e.pointerId);
+  if (wasDrag) { body.classList.remove("dragging"); bw.dragEnd(); }
+  else robotClicked();
+});
+ui.robot.addEventListener("pointercancel", () => {
+  if (press?.dragging) { body.classList.remove("dragging"); bw.dragEnd(); }
+  press = null;
+});
+ui.robot.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); robotClicked(); }
+});
+ui.robot.addEventListener("contextmenu", (e) => { e.preventDefault(); robotMenu(); });
+
+function robotClicked() {
+  if (missed) { missed = 0; hide(ui.badge); }
+  if (phase === "incoming") { ui.answer.click(); return; }
+  robotMenu();
+}
+
+function robotMenu() {
+  bw.robotMenu({ phase, muted: ui.mute.getAttribute("aria-pressed") === "true", cardOpen: body.dataset.shape === "open" });
+}
+
+// What the menus (robot and menu-bar/tray) ask us to do.
+bw.onAction(({ action, session_id }) => {
+  switch (action) {
+    case "call": if (phase === "chat" && session) placeCall(null, session); else placeCall(); break;
+    case "continue-call": closeCard(); placeCall(null, session_id); break;
+    case "message": openChat(); break;
+    case "hangup": endCall(); break;
+    case "mute": setMuted(true); break;
+    case "unmute": setMuted(false); break;
+    case "close-card": closeCard(); break;
+    case "answer": ui.answer.click(); break;
+  }
+});
+
+// ---------------------------------------------------------------- card buttons
 
 ui.answer.addEventListener("click", () => {
   if (phase === "incoming") { stopRing(); placeCall(incomingReason); }
-  else placeCall();
+  else if (phase === "chat") placeCall(null, session);   // carry on by voice
 });
 ui.decline.addEventListener("click", () => {
   if (phase === "incoming") { stopRing(); incomingReason = null; }
   closeCard();
 });
 ui.hangup.addEventListener("click", () => endCall());
-ui.mute.addEventListener("click", () => {
-  const muted = ui.mute.getAttribute("aria-pressed") !== "true";
-  client?.setMuted(muted);
-  ui.mute.setAttribute("aria-pressed", String(muted));
-  ui.mute.textContent = muted ? "Muted" : "Mute";
-});
-ui.type.addEventListener("click", () => { show(ui.typeForm); hide(ui.type); ui.typeInput.focus(); });
+ui.close.addEventListener("click", () => closeCard());
+ui.mute.addEventListener("click", () => setMuted(ui.mute.getAttribute("aria-pressed") !== "true"));
+ui.type.addEventListener("click", showTyping);
+ui.expand.addEventListener("click", () => bw.openWindow({ conversation: session }));
 ui.typeForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = ui.typeInput.value.trim();
@@ -345,18 +420,22 @@ ui.typeForm.addEventListener("submit", (e) => {
   if (text) typed(text);
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && phase === "on-call") endCall();
-  else if (e.key === "Escape" && (phase === "ended" || phase === "idle")) closeCard();
+  if (e.key !== "Escape") return;
+  if (phase === "on-call") endCall();
+  else if (body.dataset.shape === "open") closeCard();
 });
 
-// Only the dragon and the card take clicks; the rest of the window is see-through.
+// Only the robot and the card take clicks; the rest of the window is see-through.
 let interactive = false;
 document.addEventListener("mousemove", (e) => {
-  const over = !!e.target.closest?.(".card, .dragon");
-  if (over !== interactive) { interactive = over; window.bookwyrm.setInteractive(over); }
+  const over = !!e.target.closest?.(".card, .robot") || body.classList.contains("dragging");
+  if (over !== interactive) { interactive = over; bw.setInteractive(over); }
 });
 
+bw.onLayout(({ side, v }) => { body.dataset.side = side; body.dataset.v = v; });
+
 (async () => {
-  voiceUrl = await window.bookwyrm.voiceUrl();
+  await applyOs();
+  voiceUrl = await bw.voiceUrl();
   listenForIncoming();
 })();

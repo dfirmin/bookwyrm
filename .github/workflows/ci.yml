@@ -1,0 +1,134 @@
+# Install and test Bookwyrm on the three systems people run it on. Everything except Hermes
+# itself and the GitHub connection: those need keys, and are covered by the live tests in
+# docs/live-proof.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-and-test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS (Apple Silicon), os: macos-14, shots: darwin }
+          - { name: Windows, os: windows-latest, shots: win32 }
+          - { name: Linux, os: ubuntu-24.04, shots: darwin }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      BOOKWYRM_NO_MIC_PROMPT: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache speech models (about 1 GB)
+        uses: actions/cache@v4
+        with:
+          path: ~/.bookwyrm/models
+          key: speech-models-parakeet-tdt-0.6b-v2-int8-kokoro-multi-lang-v1_0
+
+      # The real one-line installers, run from this checkout. They fetch their own Node 22 when
+      # the machine's is missing or too old, as on a fresh laptop.
+      - name: Install (macOS, Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -o pipefail
+          ./install.sh --yes --plain --no-open --only uv,voice,models,app,launcher,settings \
+            --name "CI Runner" --team "Testing" --repo dfirmin/archivist-knowledge-01 2>&1 | tee "$RUNNER_TEMP/install.log"
+
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell   # Windows PowerShell 5.1, what most people's machines have
+        run: |
+          $ErrorActionPreference = 'Continue'   # as in a normal PowerShell window (Actions sets Stop)
+          .\install.ps1 --yes --plain --no-open --only uv,voice,models,app,launcher,settings --name "CI Runner" --team "Testing" --repo dfirmin/archivist-knowledge-01 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install.log"
+          # The installer never exits non-zero (it must not close the user's window); check the result.
+          $missing = @('voice\.venv\Scripts\python.exe', 'app\node_modules\electron\dist\electron.exe', 'app\dist\window.js', "$env:USERPROFILE\.bookwyrm\settings.json", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Bookwyrm.lnk") | Where-Object { -not (Test-Path $_) }
+          if ($missing) { "missing after install: $missing" | Out-File -Append -Encoding utf8 "$env:RUNNER_TEMP\install.log"; exit 1 }
+          exit 0   # don't let an exit code left over from inside the installer decide the step
+
+      - name: Put the installer's Node on PATH
+        shell: bash
+        run: |
+          exec > >(tee "$RUNNER_TEMP/path.log") 2>&1
+          if [ -d "$HOME/.bookwyrm/node" ]; then
+            nodebin=$(dirname "$(find "$HOME/.bookwyrm/node" -maxdepth 3 \( -name node -o -name node.exe \) -type f | head -1)")
+            echo "$nodebin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Installer and launcher tests
+        shell: bash
+        run: |
+          exec > >(tee "$RUNNER_TEMP/unit-tests.log") 2>&1
+          node --version
+          (cd setup && npm test)
+          (cd app && node --test tests/launcher.test.js)
+
+      - name: Voice tests (echo guard, watcher, history, speech round trip)
+        shell: bash
+        working-directory: voice
+        run: |
+          py=.venv/bin/python; [ -x "$py" ] || py=.venv/Scripts/python.exe
+          set -o pipefail
+          { "$py" tests/test_units.py && "$py" tests/test_engines.py; } 2>&1 | tee "$RUNNER_TEMP/voice-tests.log"
+
+      - name: The voice service starts and loads its voice
+        shell: bash
+        working-directory: voice
+        run: |
+          py=.venv/bin/python; [ -x "$py" ] || py=.venv/Scripts/python.exe
+          "$py" -m bookwyrm_voice.server > "$RUNNER_TEMP/voice.log" 2>&1 &
+          for i in $(seq 1 90); do
+            h=$(curl -s http://127.0.0.1:7865/health || true)
+            case "$h" in *'"models":true'*) echo "$h"; exit 0 ;; esac
+            sleep 2
+          done
+          echo "voice service never became ready:"; cat "$RUNNER_TEMP/voice.log"; exit 1
+
+      - name: The app runs (robot, drag, menu shapes, Bookwyrm window)
+        shell: bash
+        working-directory: app
+        run: |
+          set -o pipefail
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get install -y -qq xvfb >/dev/null
+            xvfb-run -a -s "-screen 0 1920x1080x24" npx electron --no-sandbox tests/smoke.js 2>&1 | tee "$RUNNER_TEMP/smoke.log"
+          else
+            npx electron tests/smoke.js 2>&1 | tee "$RUNNER_TEMP/smoke.log"
+          fi
+
+      - name: Screenshots, as this system draws them
+        if: runner.os != 'Linux'
+        shell: bash
+        working-directory: app
+        run: npx electron tests/screenshots.js "$RUNNER_TEMP/shots" ${{ matrix.shots }}
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os != 'Linux'
+        with:
+          name: screenshots-${{ runner.os }}
+          path: ${{ runner.temp }}/shots
+
+      # Show why it failed in the run's annotations (readable without opening the full log).
+      - name: Report failure
+        if: failure()
+        shell: bash
+        run: |
+          for f in "$RUNNER_TEMP"/*.log; do
+            [ -f "$f" ] || continue
+            # Windows PowerShell 5.1 writes UTF-16: dropping the NULs leaves readable ASCII.
+            text=$(tr -d '\000\r' < "$f")
+            # Test output: show the failing tests, not the summary at the end.
+            if printf '%s' "$text" | grep -q '^not ok'; then text=$(printf '%s' "$text" | grep -A 30 '^not ok'); fi
+            body=$(printf '%s\n' "$text" | tail -n 60 | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=$(basename "$f")::${body}"
+          done

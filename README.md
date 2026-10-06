@@ -26,16 +26,28 @@ that a concept body restates its sources and adds nothing to them. A source note
 true, keeps who-said-what auditable, and lets the engine's verifier, gap and scoring stages run
 on the new content. See [ADR 0002](docs/adr/0002-sme-statements-enter-as-sources.md).
 
-**Call it.** A small book-dragon sits on the edge of your screen. Click it and it rings, picks up
-and talks, with a natural voice, live captions, and you can cut in whenever you like. It can also
-call *you* when something new lands in quarantine or a new gap is filed (off unless you switch it
-on). Speech is heard and spoken on your machine; only text goes to the model. See
-[ADR 0003](docs/adr/0003-voice-companion.md).
+**Call it, or message it.** A small robot sits at the edge of your screen, quietly, in your
+system's colours. Drag it wherever it's out of the way. Click it for a menu: **Call Bookwyrm**
+and it rings, picks up and talks, in a natural voice with live captions, and you can cut in
+whenever you like. **Send a message** to type instead. It can also call *you* when something new
+lands in quarantine or a new gap is filed (off unless you switch it on). Speech is heard and
+spoken on your machine; only text goes to the model. See [ADR 0003](docs/adr/0003-voice-companion.md)
+and [ADR 0004](docs/adr/0004-companion-v2-window-installer.md).
 
 <p>
-  <img src="docs/img/companion-docked.png" alt="The Bookwyrm dragon, docked" height="200">
-  <img src="docs/img/companion-on-call.png" alt="A call in progress, with live captions on the card" height="320">
-  <img src="docs/img/companion-incoming.png" alt="Bookwyrm calling about a new quarantined document" height="320">
+  <img src="docs/img/robot.png" alt="The Bookwyrm robot at the edge of the screen" height="120">
+  <img src="docs/img/call.png" alt="A call in progress: live captions as message bubbles, mute, type, open, hang up" height="320">
+  <img src="docs/img/incoming.png" alt="Bookwyrm calling about a new quarantined document" height="320">
+</p>
+
+**Open Bookwyrm** for the full window: every call and conversation (pick one up again by text
+or by voice), the **Library** of what needs you in the repo (quarantined drafts, gaps, open pull
+requests, each with *Ask Bookwyrm*), and **Settings** (your name and team, the repo, keys, voice,
+calls, open at login). Quit any time from the robot's menu or the menu-bar / tray icon.
+
+<p>
+  <img src="docs/img/window-library.png" alt="The Library: quarantine, gaps and pull requests" width="49%">
+  <img src="docs/img/window-chat-dark.png" alt="A call, saved in the conversation history (dark mode)" width="49%">
 </p>
 
 Not yet: the Teams bot, a meeting bot, Postgres memory, and dispatching Archivist runs. Each can
@@ -57,57 +69,56 @@ attach later without changing the core (see
 
 ## Setup
 
-**On a Mac, including the voice companion:** follow [docs/setup-macos.md](docs/setup-macos.md).
-The steps below are the general version.
+Before you start, have two things ready:
 
-Requirements: Python 3.11+, Docker or the GitHub MCP server's release binary (see below), and
-Hermes Agent installed so `hermes` is on your PATH.
+- **An Anthropic API key** ([console.anthropic.com](https://console.anthropic.com/settings/keys)).
+- **A fine-grained GitHub token** ([make one](https://github.com/settings/personal-access-tokens/new))
+  that can reach *only* the knowledge repo, with Contents, Issues and Pull requests set to
+  read and write. The token is the real fence on what Bookwyrm can touch.
 
-1. **Protect the knowledge repo's `main`.** Require a pull request before merging. Bookwyrm's
-   rules say it only works through PRs; branch protection is what makes that true.
-2. **Create a fine-grained GitHub token** scoped to *only* the knowledge repo, with
-   Contents, Issues and Pull requests set to read and write. The token is the real fence on
-   what Bookwyrm can touch.
-3. **Install the profile:**
-
-   ```bash
-   ./scripts/install.sh --repo dfirmin/archivist-knowledge-01
-   ```
-
-   This creates the `bookwyrm` Hermes profile (and a `bookwyrm` command), points it at this
-   repo's `skills/`, and writes the target repo into `SOUL.md`.
-4. **Add secrets** to `~/.hermes/profiles/bookwyrm/.env` (template: `profile/.env.example`):
-   `GITHUB_PERSONAL_ACCESS_TOKEN`, plus `ANTHROPIC_API_KEY` or your gateway key.
-5. **Pick a model:** edit `model:` in `~/.hermes/profiles/bookwyrm/config.yaml` — direct
-   Anthropic is the default; the LiteLLM block is there commented out.
-6. **Check the GitHub tools connect:**
-
-   ```bash
-   hermes -p bookwyrm mcp test github
-   ```
-
-   It should list the server's tools. If it says the `mcp` Python SDK is not installed, run
-   `hermes setup` and turn on MCP support (Hermes keeps it optional), then test again. Without
-   it Bookwyrm still starts, but with no GitHub tools: it will tell you it can't reach the repo.
-7. **Talk to it:**
-
-   ```bash
-   bookwyrm chat
-   ```
-
-   At startup Hermes may print `Warning: Unknown toolsets: mcp-github`. That is a start-up
-   ordering message (the toolset is named before the MCP server has connected); the tools are
-   there once the server connects. `mcp test github` above is the real check.
-
-Re-run `install.sh` after pulling changes to `profile/`; it keeps your `.env` and memory.
-
-**No Docker?** Use the GitHub MCP server's release binary
-([releases](https://github.com/github/github-mcp-server/releases)) and pass its path to the
-installer, which wires it in place of Docker (and keeps doing so on every re-run):
+Then run one line. **macOS or Linux** (Terminal):
 
 ```bash
-./scripts/install.sh --repo dfirmin/archivist-knowledge-01 --github-mcp-bin ~/bin/github-mcp-server
+curl -fsSL https://raw.githubusercontent.com/dfirmin/bookwyrm/main/install.sh | bash
 ```
+
+**Windows 10/11** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/dfirmin/bookwyrm/main/install.ps1 | iex
+```
+
+A setup wizard asks for your name, team, knowledge repo and the two keys (it checks them as you
+go), then installs everything with a checklist: Hermes Agent, the GitHub MCP server, the
+`bookwyrm` Hermes profile, Hermes' local API, the voice service and its speech models (about
+1 GB, once), and the companion app, which it adds to Applications / the Start menu / your app
+menu. It fetches Node.js 22 for itself if you don't have it, and keeps Bookwyrm in `~/bookwyrm`
+(`BOOKWYRM_DIR` to change). Your settings go to `~/.bookwyrm/settings.json`; the keys only to the
+profile's own `.env`.
+
+Run the same line again any time, for example after an update: it skips what's done. From a
+clone, `./install.sh` (or `.\install.ps1`) does the same with that clone.
+
+For scripts and CI:
+
+```bash
+ANTHROPIC_API_KEY=... GITHUB_PERSONAL_ACCESS_TOKEN=... \
+  ./install.sh --yes --name "Dee Firmin" --team "Data Engineering" --repo dfirmin/archivist-knowledge-01
+./install.sh --yes --only voice,models,app,launcher     # just some steps
+./install.sh --dry-run                                  # show what it would do
+```
+
+`./install.sh --help` lists every option and step. One more thing to do yourself: **protect the
+knowledge repo's `main`** (require a pull request before merging). Bookwyrm's rules say it only
+works through PRs; branch protection is what makes that true.
+
+**Using Bookwyrm.** Open it like any app (Applications, the Start menu, or your app menu), then
+click the robot. [docs/setup.md](docs/setup.md) walks through it, with what to do if something's
+off. Bookwyrm also works in a terminal: `hermes -p bookwyrm chat`.
+
+**Choosing a model:** edit `model:` in `~/.hermes/profiles/bookwyrm/config.yaml`. Direct Anthropic
+is the default; a LiteLLM block is there commented out. Setup refreshes that file from
+`profile/config.yaml` on every run, so make lasting changes there.
 
 ## Layout
 
@@ -116,9 +127,11 @@ profile/                 Hermes profile template: config.yaml, SOUL.md, .env.exa
 skills/                  Bookwyrm's skills (loaded read-only via skills.external_dirs)
 voice/                   The call service: Pipecat pipeline, Hermes adapter, local speech models
 voice/prompts/           How Bookwyrm talks on a call
-app/                     The desktop companion (Electron): the dragon, the ring, the call card
-scripts/install.sh       Creates or refreshes the bookwyrm profile
-scripts/setup-voice.sh   Sets up the call service and the companion app
+app/                     The desktop app (Electron): the robot, its call card, the Bookwyrm window
+install.sh, install.ps1  One-line installers: get Node.js and the source, start the wizard
+setup/                   The setup wizard (Ink): every install step, safe to re-run
+docs/setup.md            Installing, using, troubleshooting, removing
 docs/adr/                Decisions
+.github/workflows/       CI: install and test on macOS, Windows and Linux
 docs/live-proof/         What was run and what it showed
 ```

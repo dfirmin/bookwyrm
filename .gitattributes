@@ -1,0 +1,8 @@
+# Keep line endings as written, whatever the platform's git settings: shell scripts must stay LF
+# to run, and the profile templates are rendered byte-for-byte.
+* text=auto
+*.sh text eol=lf
+profile/** text eol=lf
+skills/** text eol=lf
+voice/prompts/** text eol=lf
+*.ps1 text eol=crlf

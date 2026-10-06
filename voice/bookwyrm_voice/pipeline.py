@@ -47,7 +47,10 @@ class Engines:
         self.stt_dir = ensure_model(settings.models_dir, STT_MODEL)
         self.tts_dir = ensure_model(settings.models_dir, TTS_MODEL)
         self.recognizer = load_recognizer(self.stt_dir)
-        self.kokoro = Kokoro(self.tts_dir, settings.voice)
+        try:
+            self.kokoro = Kokoro(self.tts_dir, settings.voice)
+        except ValueError:  # a voice name this model doesn't have: fall back rather than fail
+            self.kokoro = Kokoro(self.tts_dir, "af_heart")
 
     def stt(self) -> ParakeetSTTService:
         return ParakeetSTTService(recognizer=self.recognizer)

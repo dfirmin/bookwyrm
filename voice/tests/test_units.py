@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from bookwyrm_voice.config import Settings  # noqa: E402
 from bookwyrm_voice import watch  # noqa: E402
 from bookwyrm_voice.echo import EchoGuard, SpokenLog  # noqa: E402
 
@@ -75,7 +76,7 @@ class _Resp:
 
 def test_watcher():
     tmp = Path(tempfile.mkdtemp())
-    watch.STATE_DIR, watch.SEEN, watch.PREFS = tmp, tmp / "seen.json", tmp / "prefs.json"
+    watch.STATE_DIR, watch.SEEN = tmp, tmp / "seen.json"
     gap8 = _issue(8, "[security] Phishing Credential Harvest Response — missing_escalation")
     q19 = _issue(19, "Quarantined: social-media-guidelines.md", ["quarantine"])
     batches = [
@@ -91,7 +92,7 @@ def test_watcher():
     expected = [[], [("quarantine", 30)], [("gap", 31)], []]
 
     async def run():
-        w = watch.Watcher("o/r", "token")
+        w = watch.Watcher(lambda: Settings(repo="o/r", github_token="token", calls_you=True))
         for batch, want in zip(batches, expected):
             async def fake_get(*_a, _b=batch, **_k):
                 return _Resp(_b)
@@ -105,7 +106,30 @@ def test_watcher():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_history():
+    from bookwyrm_voice.history import History
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        h = History(tmp / "h.db")
+        h.add("voice-1", "call", "assistant", "Hey Dee! What's up?", via="voice")
+        assert h.get("voice-1")["title"] == "Call"
+        h.add("voice-1", "call", "user", "What's in quarantine right now?", via="voice")
+        assert h.get("voice-1")["title"] == "What's in quarantine right now?"   # named by the first question
+        h.add("text-1", "chat", "user", "x" * 100, via="text")
+        assert h.get("text-1")["title"].endswith("…") and len(h.get("text-1")["title"]) <= 60
+        h.add("voice-1", "call", "assistant", "Typed follow-up answer", via="text")   # carried on by text
+        convs = h.conversations()
+        assert [c["id"] for c in convs] == ["voice-1", "text-1"]                     # newest activity first
+        assert convs[0]["count"] == 3 and convs[0]["voice"] == 2
+        h.rename("text-1", "Long one")
+        h.delete("voice-1")
+        assert [c["title"] for c in h.conversations()] == ["Long one"] and h.messages("voice-1") == []
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_echo_guard()
     test_watcher()
-    print("ok: echo guard (15 cases), watcher (4 checks)")
+    test_history()
+    print("ok: echo guard (15 cases), watcher (4 checks), history")

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; style-src 'self'; img-src 'self' data: https:; font-src 'self'" />
+  <title>Bookwyrm</title>
+  <link rel="stylesheet" href="../dist/window.css" />
+</head>
+<body data-view="chat">
+  <aside class="sidebar">
+    <div class="sidebar-top drag"></div>
+    <nav class="nav" aria-label="Bookwyrm">
+      <button type="button" class="nav-item" id="nav-new" data-view-target="chat">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M9 3.5H5.5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V11" /><path d="M14.6 3.1a1.5 1.5 0 0 1 2.2 2.2L10.5 11.6 8 12.2l.6-2.5z" /></svg>
+        New conversation
+      </button>
+      <button type="button" class="nav-item" id="nav-library" data-view-target="library">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3.5" width="3" height="13" rx="0.8" /><rect x="7.5" y="3.5" width="3" height="13" rx="0.8" /><path d="M12.3 4.6l2.9-.8 3.3 12-2.9.8z" /></svg>
+        Library
+        <span class="count" id="library-count" hidden></span>
+      </button>
+      <button type="button" class="nav-item" id="nav-settings" data-view-target="settings">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6" /><path d="M10 2.5v2M10 15.5v2M17.5 10h-2M4.5 10h-2M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4M15.3 15.3l-1.4-1.4M6.1 6.1L4.7 4.7" /></svg>
+        Settings
+      </button>
+    </nav>
+    <label class="search">
+      <span class="sr-only">Search conversations</span>
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5" /><path d="M12.2 12.2L16.5 16.5" /></svg>
+      <input id="search" type="search" placeholder="Search" autocomplete="off" />
+    </label>
+    <div class="history" id="history" role="list" aria-label="Conversations"></div>
+  </aside>
+
+  <main class="content">
+    <header class="toolbar drag">
+      <h1 id="view-title">New conversation</h1>
+      <div class="toolbar-actions">
+        <button type="button" class="button" id="call-button" title="Talk to Bookwyrm about this conversation">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path class="fill" d="M6.6 2.8l1.6 3.4c.2.5.1 1-.3 1.4L6.6 8.8a10 10 0 0 0 4.6 4.6l1.2-1.3c.4-.4.9-.5 1.4-.3l3.4 1.6c.5.2.8.8.7 1.3l-.4 2c-.1.6-.7 1-1.3 1A14.6 14.6 0 0 1 2.3 3.7c0-.6.4-1.2 1-1.3l2-.4c.5-.1 1.1.2 1.3.8z" /></svg>
+          <span id="call-label">Call</span>
+        </button>
+        <button type="button" class="button" id="refresh-library" hidden>Refresh</button>
+      </div>
+    </header>
+
+    <!-- conversation -->
+    <section class="view" id="chat-view" aria-labelledby="view-title">
+      <div class="scroller" id="scroller">
+        <div class="empty" id="chat-empty">
+          <svg class="mini-robot" viewBox="0 0 64 64" aria-hidden="true">
+            <rect class="head" x="11" y="12" width="42" height="35" rx="12.5" />
+            <path class="ribbon" d="M41 11h4.6v11.5l-2.3-1.9-2.3 1.9z" />
+            <rect class="screen" x="16" y="18" width="32" height="23" rx="7.5" />
+            <rect class="eye" x="22.5" y="24" width="5.5" height="9" rx="2.75" />
+            <rect class="eye" x="36" y="24" width="5.5" height="9" rx="2.75" />
+            <rect class="torso" x="22" y="45" width="20" height="11" rx="5.5" />
+          </svg>
+          <h2 id="empty-greeting">What do you need from the knowledge repo?</h2>
+          <p id="empty-repo"></p>
+          <div class="suggestions" id="suggestions">
+            <button type="button" class="suggestion">What's in quarantine right now?</button>
+            <button type="button" class="suggestion">Which gaps are open, and which matters most?</button>
+            <button type="button" class="suggestion">What does the bundle say about our incident process?</button>
+            <button type="button" class="suggestion">I want to record something I know that isn't written down.</button>
+          </div>
+        </div>
+        <ol class="messages" id="messages"></ol>
+      </div>
+      <form class="composer" id="composer">
+        <label class="sr-only" for="composer-input">Message Bookwyrm</label>
+        <textarea id="composer-input" rows="1" placeholder="Message Bookwyrm"></textarea>
+        <button type="submit" class="send" id="send" aria-label="Send" disabled>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16V4.5M5 9.5l5-5 5 5" /></svg>
+        </button>
+      </form>
+    </section>
+
+    <!-- library -->
+    <section class="view" id="library-view" hidden>
+      <div class="scroller">
+        <div class="page">
+          <p class="lede" id="library-lede"></p>
+          <div id="library-body"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- settings -->
+    <section class="view" id="settings-view" hidden>
+      <div class="scroller">
+        <form class="page settings" id="settings" autocomplete="off">
+          <h2>You</h2>
+          <div class="group">
+            <label class="row"><span>Name</span><input name="name" placeholder="Dee Firmin" /></label>
+            <label class="row"><span>Team</span><input name="team" placeholder="Data Engineering" /></label>
+          </div>
+          <p class="hint">Bookwyrm greets you by name, and attributes what you tell it to you and your team.</p>
+
+          <h2>Knowledge repo</h2>
+          <div class="group">
+            <div class="row">
+              <span>Repository</span>
+              <div class="control">
+                <input name="repo" placeholder="owner/name" spellcheck="false" />
+                <button type="button" class="button small" id="repo-apply" hidden>Switch</button>
+              </div>
+            </div>
+            <div class="row" data-key="githubToken">
+              <span>GitHub token</span>
+              <div class="control">
+                <span class="key-status" id="github-status"></span>
+                <button type="button" class="button small replace">Replace…</button>
+              </div>
+            </div>
+            <div class="row key-entry" data-entry="githubToken" hidden>
+              <input type="password" placeholder="github_pat_…" spellcheck="false" />
+              <button type="button" class="button small primary save-key">Save</button>
+            </div>
+            <div class="row" data-key="anthropicKey">
+              <span>Anthropic API key</span>
+              <div class="control">
+                <span class="key-status" id="anthropic-status"></span>
+                <button type="button" class="button small replace">Replace…</button>
+              </div>
+            </div>
+            <div class="row key-entry" data-entry="anthropicKey" hidden>
+              <input type="password" placeholder="sk-ant-…" spellcheck="false" />
+              <button type="button" class="button small primary save-key">Save</button>
+            </div>
+          </div>
+          <p class="hint">The GitHub token should be fine-grained and cover only this repository: Contents, Issues and Pull requests, read and write. Keys are stored in Bookwyrm's Hermes profile on this computer, never in Bookwyrm's own settings.</p>
+          <pre class="setup-log" id="setup-log" hidden></pre>
+
+          <h2>Voice</h2>
+          <div class="group">
+            <div class="row">
+              <span>Voice</span>
+              <div class="control">
+                <select name="voice" id="voice"></select>
+                <button type="button" class="button small" id="voice-play">Play</button>
+              </div>
+            </div>
+            <label class="row">
+              <span>Speaking speed</span>
+              <div class="control slider"><small>Slower</small><input type="range" name="voice_speed" min="0.8" max="1.25" step="0.05" /><small>Faster</small></div>
+            </label>
+          </div>
+
+          <h2>Calls from Bookwyrm</h2>
+          <div class="group">
+            <label class="row">
+              <span>Let Bookwyrm call me<small>When a draft lands in quarantine or a new gap is filed. Never about older ones.</small></span>
+              <input type="checkbox" role="switch" name="calls_you" />
+            </label>
+            <label class="row">
+              <span>Check the repo every</span>
+              <select name="watch_minutes">
+                <option value="5">5 minutes</option><option value="15">15 minutes</option>
+                <option value="30">30 minutes</option><option value="60">hour</option>
+              </select>
+            </label>
+          </div>
+
+          <h2>App</h2>
+          <div class="group">
+            <label class="row"><span>Open Bookwyrm when I log in</span><input type="checkbox" role="switch" id="login-item" /></label>
+            <label class="row"><span>Show the robot on screen</span><input type="checkbox" role="switch" id="show-robot" /></label>
+            <div class="row"><span>Voice service<small id="voice-health"></small></span><button type="button" class="button small" id="voice-restart">Restart</button></div>
+          </div>
+          <p class="hint" id="app-paths"></p>
+          <p class="saved" id="saved" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+    </section>
+  </main>
+  <audio id="preview-audio"></audio>
+  <script src="../dist/window.js"></script>
+</body>
+</html>

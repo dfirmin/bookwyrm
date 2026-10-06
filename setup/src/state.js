@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { STEP_IDS, loadLauncher, modelsPresent } from './steps.js';
+import { DEFAULT_REGISTRY } from './registry.js';
 import { findHermes, paths, profileDir, readEnvFile, readJson } from './sys.js';
 
 export const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -16,7 +17,13 @@ export const HELP = `Bookwyrm setup
                          ANTHROPIC_API_KEY (or LITELLM_API_KEY) and GITHUB_PERSONAL_ACCESS_TOKEN
                          environment variables
   --name "Dee Firmin"    your name            --team "Data Engineering"   your team
-  --repo owner/name      the knowledge repo   --caller "Name, Team"       name and team in one
+  --repo owner/name      the knowledge repo (must be an active target in the Archivist registry)
+  --caller "Name, Team"  name and team in one
+  --registry owner/repo[@branch]
+                         the Archivist registry to check repos against (default dfirmin/archivist;
+                         or BOOKWYRM_REGISTRY, or "registry" in settings.json)
+  --show-test-targets    list the registry's test targets in the repo picker too
+  --targets-json         print the registry's targets as JSON, with what your token can do in each
   --only a,b             run only these steps  --skip a,b                 skip these steps
   --dry-run              show what would happen, change nothing
   --open / --no-open     open Bookwyrm at the end (default: ask; --yes: don't)
@@ -68,6 +75,9 @@ export function parseArgs(argv) {
       case '--repo': opts.repo = take(i++, a); break;
       case '--caller': Object.assign(opts, splitCaller(take(i++, a))); break;
       case '--profile': opts.profile = take(i++, a); break;
+      case '--registry': opts.registry = take(i++, a); break;
+      case '--show-test-targets': opts.showTest = true; break;
+      case '--targets-json': opts.targetsJson = true; break;
       case '--github-mcp-bin': opts.githubMcpBin = take(i++, a); break;
       case '--provider': {
         const v = take(i++, a).toLowerCase();
@@ -118,6 +128,9 @@ export function prefill(opts) {
   const fromLegacy = legacy.BOOKWYRM_CALLER ? splitCaller(legacy.BOOKWYRM_CALLER) : {};
   const saved = settings.model || {};
   return {
+    // Where the list of Archivist targets comes from.
+    registry: opts.registry ?? process.env.BOOKWYRM_REGISTRY ?? settings.registry ?? DEFAULT_REGISTRY,
+    savedRepo: settings.repo ?? legacy.BOOKWYRM_REPO ?? '',
     name: opts.name ?? settings.name ?? fromLegacy.name ?? '',
     team: opts.team ?? settings.team ?? fromLegacy.team ?? '',
     repo: opts.repo ?? settings.repo ?? legacy.BOOKWYRM_REPO ?? '',
@@ -177,6 +190,17 @@ export async function checkAnthropic(key) {
   if (r.status === 403) return { ok: false, message: 'This key isn\'t allowed to use the API. Ask whoever manages your Anthropic account.' };
   if (r.status === 0) return { ok: false, message: `Couldn't reach Anthropic to check the key (${r.error}). Your network may block it.` };
   return { ok: false, message: `Anthropic answered with an unexpected status (${r.status}).` };
+}
+
+/** Before a repo is chosen: is this a working GitHub token at all? */
+export async function checkGitHubToken(token) {
+  const r = await get('https://api.github.com/user', {
+    Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'bookwyrm-setup',
+  });
+  if (r.status === 200) return { ok: true, message: `GitHub accepted the token${r.body?.login ? ` (signed in as ${r.body.login})` : ''}. Next you'll pick the repo.` };
+  if (r.status === 401) return { ok: false, message: 'GitHub didn\'t accept this token. It may be mistyped or expired.' };
+  if (r.status === 0) return { ok: false, message: `Couldn't reach GitHub to check the token (${r.error}).` };
+  return { ok: false, message: `GitHub answered with an unexpected status (${r.status}).` };
 }
 
 export async function checkGitHub(token, repo) {

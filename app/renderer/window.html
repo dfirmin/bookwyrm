@@ -147,12 +147,16 @@
           <h2>Knowledge repo</h2>
           <div class="group">
             <div class="row">
-              <span>Repository</span>
+              <span>Repository<small id="repo-source">From the Archivist registry</small></span>
               <div class="control">
-                <input name="repo" placeholder="owner/name" spellcheck="false" />
+                <select name="repo" id="repo"><option value="">Loading…</option></select>
                 <button type="button" class="button small" id="repo-apply" hidden>Switch</button>
               </div>
             </div>
+            <label class="row" id="show-test-row" hidden>
+              <span>Show test targets</span>
+              <input type="checkbox" role="switch" id="show-test" />
+            </label>
             <div class="row" data-key="githubToken">
               <span>GitHub token</span>
               <div class="control">
@@ -165,7 +169,8 @@
               <button type="button" class="button small primary save-key">Save</button>
             </div>
           </div>
-          <p class="hint">The GitHub token should be fine-grained and cover only this repository: Contents, Issues and Pull requests, read and write. Keys are stored in Bookwyrm's Hermes profile on this computer, never in Bookwyrm's own settings.</p>
+          <p class="hint" id="repo-note" hidden></p>
+          <p class="hint">Bookwyrm looks after repos Archivist runs on: the active targets in its registry. To add one, open a pull request to the registry's targets.yaml. The GitHub token should be fine-grained and cover only this repository: Contents, Issues and Pull requests, read and write. Keys are stored in Bookwyrm's Hermes profile on this computer, never in Bookwyrm's own settings.</p>
           <pre class="setup-log" id="setup-log" hidden></pre>
 
           <h2>Voice</h2>

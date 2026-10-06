@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld("bookwyrm", {
   companionVisible: () => ipcRenderer.invoke("companion:visible"),
   setCompanionVisible: (on_) => ipcRenderer.invoke("companion:set-visible", on_),
   runSetup: (changes) => ipcRenderer.invoke("setup:apply", changes),
+  targets: (opts) => ipcRenderer.invoke("targets:list", opts || {}),
   onSetupLine: on("setup:line"),
   restartVoice: () => ipcRenderer.invoke("voice:restart"),
   appInfo: () => ipcRenderer.invoke("app:info"),

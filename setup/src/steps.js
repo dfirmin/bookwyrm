@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { DEFAULT_REGISTRY, validateTarget } from './registry.js';
 import {
   childEnv, download, fileHash, findHermes, findUv, httpAlive, isMac, isWin, npmCommand, parseEnv, paths,
   profileDir, readEnvFile, readJson, readText, run, secureFile, setEnvValues, sha256, sleep, tarBinary,
@@ -206,6 +207,15 @@ export const STEPS = [
     async run(ctx, io) {
       const repo = ctx.answers.repo;
       if (!repo) throw new StepError('I need the knowledge repo (owner/name) for the profile.', 'Run setup again and fill in "About you", or pass --repo owner/name.');
+      // Only an active target in the Archivist registry, whose repo carries Archivist's marker.
+      const token = ctx.answers.githubToken || readEnvFile(path.join(profileDir(ctx.profile), '.env')).GITHUB_PERSONAL_ACCESS_TOKEN;
+      const verdict = await validateTarget(repo, {
+        registry: ctx.answers.registry, token, keepIfUnreachable: repo === ctx.answers.savedRepo,
+      });
+      if (!verdict.ok) {
+        throw new StepError(verdict.message, 'Pick a knowledge repo from the Archivist registry: run setup again, or use Settings → Knowledge repo in the app.');
+      }
+      io.log(verdict.warn || verdict.message);
       const dir = profileDir(ctx.profile);
       if (!fs.existsSync(dir)) {
         await hermes(ctx, io, ['profile', 'create', ctx.profile, '--no-skills', '--description',
@@ -500,8 +510,10 @@ function mcpBinFor(ctx) {
 const SETTINGS_DEFAULTS = { voice: 'af_heart', voice_speed: 1.0, calls_you: false, watch_minutes: 5 };
 
 function settingsPatch(ctx) {
-  const { name, team, repo, provider, gatewayUrl, gatewayModel } = ctx.answers;
+  const { name, team, repo, provider, gatewayUrl, gatewayModel, registry } = ctx.answers;
   const patch = { profile: ctx.profile };
+  // A company registry (a fork of Archivist, say) is remembered; the default isn't written.
+  if (registry && registry !== DEFAULT_REGISTRY) patch.registry = registry;
   if (name) patch.name = name;
   if (team) patch.team = team;
   if (repo) patch.repo = repo;

@@ -450,6 +450,23 @@ ipcMain.handle("setup:apply", (e, changes = {}) => new Promise((resolve) => {
   });
 }));
 
+// Which knowledge repos Bookwyrm may look after: the Archivist registry's active targets, with what
+// the saved GitHub token can do in each (the setup wizard holds the rules; see setup/src/registry.js).
+ipcMain.handle("targets:list", (_e, opts = {}) => new Promise((resolve) => {
+  if (!fs.existsSync(SETUP_SCRIPT)) {
+    resolve({ error: "The setup wizard isn't installed here. Run the Bookwyrm installer again." });
+    return;
+  }
+  const args = [SETUP_SCRIPT, "--targets-json", ...(opts.showTest ? ["--show-test-targets"] : [])];
+  const child = spawn(process.execPath, args, { cwd: REPO_DIR, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, windowsHide: true });
+  let out = "";
+  child.stdout.on("data", (b) => { out += b; });
+  child.on("error", (err) => resolve({ error: err.message }));
+  child.on("exit", () => {
+    try { resolve(JSON.parse(out.trim().split("\n").pop())); } catch { resolve({ error: "Couldn't read the Archivist registry." }); }
+  });
+}));
+
 // ---- lifecycle ------------------------------------------------------------------------------------
 
 if (!app.requestSingleInstanceLock()) {

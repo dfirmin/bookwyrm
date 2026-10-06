@@ -335,6 +335,19 @@ async function loadLibrary() {
   let d;
   try { d = await api("/api/library"); } catch (e) { d = { error: `Couldn't reach Bookwyrm's voice service (${e.message}).` }; }
   out.replaceChildren();
+  bw.targets().then((t) => {
+    if (!t?.current || t.current.ok || view !== "library") return;
+    const b = document.createElement("p");
+    b.className = "banner";
+    b.textContent = `${t.current.message} `;
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "button small";
+    go.textContent = "Choose another repo";
+    go.addEventListener("click", () => setView("settings"));
+    b.append(go);
+    out.prepend(b);
+  }).catch(() => {});
   if (d.error) {
     $("library-lede").textContent = "";
     const p = document.createElement("p");
@@ -406,7 +419,7 @@ async function loadSettings() {
   try { settings = await api("/api/settings"); } catch (e) { saved(`Couldn't load settings: ${e.message}`); return; }
   form.name.value = settings.name;
   form.team.value = settings.team;
-  form.repo.value = settings.repo;
+  loadTargets();
   form.voice_speed.value = settings.voice_speed;
   form.calls_you.checked = settings.calls_you;
   form.watch_minutes.value = String(Math.round(settings.watch_minutes));
@@ -530,12 +543,51 @@ function applyModel(newKey = null) {
     d.provider === "gateway" ? `Connecting Bookwyrm to ${d.gatewayUrl} as "${d.gatewayModel}"…` : "Connecting Bookwyrm to Anthropic directly…");
 }
 
-// Repo and keys go through the setup wizard: they change Bookwyrm's Hermes profile too.
-form.repo.addEventListener("input", () => { $("repo-apply").hidden = form.repo.value.trim() === settings?.repo; });
+// ---- which knowledge repo: active targets from the Archivist registry
+
+const ACCESS_NOTE = { none: "token can't reach it", read: "read-only for your token" };
+let targets = null;
+
+async function loadTargets() {
+  const sel = $("repo");
+  const note = $("repo-note");
+  sel.disabled = true;
+  sel.replaceChildren(new Option("Reading the Archivist registry…", ""));
+  targets = await bw.targets({ showTest: $("show-test").checked });
+  sel.replaceChildren();
+  note.hidden = true;
+  if (targets.error) {
+    // Can't read the registry: keep showing the saved repo; switching waits until it can be checked.
+    if (settings?.repo) sel.append(new Option(settings.repo, settings.repo));
+    note.textContent = `${targets.error} You can keep using ${settings?.repo || "your repo"}; switching needs the registry.`;
+    note.hidden = false;
+    $("repo-source").textContent = "Archivist registry unavailable";
+    $("repo-apply").hidden = true;
+    return;
+  }
+  $("repo-source").textContent = `From the Archivist registry (${targets.source})`;
+  for (const t of targets.targets) {
+    const label = `${t.name} (${t.repo})${t.type === "test" ? ", test" : ""}${ACCESS_NOTE[t.access] ? `: ${ACCESS_NOTE[t.access]}` : ""}`;
+    const o = new Option(label, t.repo);
+    o.disabled = t.access === "none" || t.access === "read";
+    sel.append(o);
+  }
+  if (settings?.repo && !targets.targets.some((t) => t.repo === settings.repo)) {
+    sel.append(new Option(`${settings.repo} (not an active target)`, settings.repo));
+  }
+  sel.value = settings?.repo || "";
+  sel.disabled = false;
+  $("show-test-row").hidden = !(targets.hiddenTest || $("show-test").checked);
+  if (targets.current && !targets.current.ok) { note.textContent = targets.current.message; note.hidden = false; }
+  $("repo-apply").hidden = true;
+}
+
+form.repo.addEventListener("change", () => { $("repo-apply").hidden = !form.repo.value || form.repo.value === settings?.repo; });
+$("show-test").addEventListener("change", loadTargets);
 $("repo-apply").addEventListener("click", () => {
-  const repo = form.repo.value.trim();
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) { saved("The repository should look like owner/name."); return; }
-  applySetup({ repo }, `Switching Bookwyrm to ${repo}…`);
+  const repo = form.repo.value;
+  const t = targets?.targets?.find((x) => x.repo === repo);
+  applySetup({ repo }, `Switching Bookwyrm to ${t ? t.name : repo}…`);
 });
 for (const row of form.querySelectorAll("[data-key]")) {
   const entry = form.querySelector(`[data-entry="${row.dataset.key}"]`);

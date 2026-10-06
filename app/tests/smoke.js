@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
+process.env.BOOKWYRM_NO_MIC_PROMPT = "1";
 process.env.BOOKWYRM_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "bw-smoke-"));
 const { app, BrowserWindow, ipcMain, screen } = require("electron");
 require("../main.js");

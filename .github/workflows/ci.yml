@@ -1,0 +1,114 @@
+# Install and test Bookwyrm on the three systems people run it on. Everything except Hermes
+# itself and the GitHub connection: those need keys, and are covered by the live tests in
+# docs/live-proof.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-and-test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS (Apple Silicon), os: macos-14, shots: darwin }
+          - { name: Windows, os: windows-latest, shots: win32 }
+          - { name: Linux, os: ubuntu-24.04, shots: darwin }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      BOOKWYRM_NO_MIC_PROMPT: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache speech models (about 1 GB)
+        uses: actions/cache@v4
+        with:
+          path: ~/.bookwyrm/models
+          key: speech-models-parakeet-tdt-0.6b-v2-int8-kokoro-multi-lang-v1_0
+
+      # The real one-line installers, run from this checkout. They fetch their own Node 22 when
+      # the machine's is missing or too old, as on a fresh laptop.
+      - name: Install (macOS, Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: >-
+          ./install.sh --yes --plain --no-open --only voice,models,app,launcher,settings
+          --name "CI Runner" --team "Testing" --repo dfirmin/archivist-knowledge-01
+
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell   # Windows PowerShell 5.1, what most people's machines have
+        run: |
+          .\install.ps1 --yes --plain --no-open --only voice,models,app,launcher,settings --name "CI Runner" --team "Testing" --repo dfirmin/archivist-knowledge-01
+          # The installer never exits non-zero (it must not close the user's window); check the result.
+          foreach ($p in @('voice\.venv\Scripts\python.exe', 'app\node_modules\electron\dist\electron.exe', 'app\dist\window.js', "$env:USERPROFILE\.bookwyrm\settings.json", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Bookwyrm.lnk")) {
+            if (-not (Test-Path $p)) { Write-Error "missing after install: $p"; exit 1 }
+          }
+
+      - name: Put the installer's Node on PATH
+        shell: bash
+        run: |
+          if [ -d "$HOME/.bookwyrm/node" ]; then
+            nodebin=$(dirname "$(find "$HOME/.bookwyrm/node" -maxdepth 3 \( -name node -o -name node.exe \) -type f | head -1)")
+            echo "$nodebin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Installer and launcher tests
+        shell: bash
+        run: |
+          node --version
+          (cd setup && npm test)
+          (cd app && node --test tests/launcher.test.js)
+
+      - name: Voice tests (echo guard, watcher, history, speech round trip)
+        shell: bash
+        working-directory: voice
+        run: |
+          py=.venv/bin/python; [ -x "$py" ] || py=.venv/Scripts/python.exe
+          "$py" tests/test_units.py
+          "$py" tests/test_engines.py
+
+      - name: The voice service starts and loads its voice
+        shell: bash
+        working-directory: voice
+        run: |
+          py=.venv/bin/python; [ -x "$py" ] || py=.venv/Scripts/python.exe
+          "$py" -m bookwyrm_voice.server > "$RUNNER_TEMP/voice.log" 2>&1 &
+          for i in $(seq 1 90); do
+            h=$(curl -s http://127.0.0.1:7865/health || true)
+            case "$h" in *'"models":true'*) echo "$h"; exit 0 ;; esac
+            sleep 2
+          done
+          echo "voice service never became ready:"; cat "$RUNNER_TEMP/voice.log"; exit 1
+
+      - name: The app runs (robot, drag, menu shapes, Bookwyrm window)
+        shell: bash
+        working-directory: app
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get install -y -qq xvfb >/dev/null
+            xvfb-run -a -s "-screen 0 1920x1080x24" npx electron --no-sandbox tests/smoke.js
+          else
+            npx electron tests/smoke.js
+          fi
+
+      - name: Screenshots, as this system draws them
+        if: runner.os != 'Linux'
+        shell: bash
+        working-directory: app
+        run: npx electron tests/screenshots.js "$RUNNER_TEMP/shots" ${{ matrix.shots }}
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os != 'Linux'
+        with:
+          name: screenshots-${{ runner.os }}
+          path: ${{ runner.temp }}/shots

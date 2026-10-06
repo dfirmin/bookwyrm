@@ -457,7 +457,8 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     if (IS_MAC) {
       app.dock.hide();
-      await systemPreferences.askForMediaAccess("microphone");
+      // CI and tests have no one to answer the prompt.
+      if (!process.env.BOOKWYRM_NO_MIC_PROMPT) await systemPreferences.askForMediaAccess("microphone");
     }
     session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === "media"));
     if (!(await voiceHealth())) startVoiceService();

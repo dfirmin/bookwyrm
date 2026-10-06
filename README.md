@@ -116,9 +116,14 @@ works through PRs; branch protection is what makes that true.
 click the robot. [docs/setup.md](docs/setup.md) walks through it, with what to do if something's
 off. Bookwyrm also works in a terminal: `hermes -p bookwyrm chat`.
 
-**Choosing a model:** edit `model:` in `~/.hermes/profiles/bookwyrm/config.yaml`. Direct Anthropic
-is the default; a LiteLLM block is there commented out. Setup refreshes that file from
-`profile/config.yaml` on every run, so make lasting changes there.
+**Anthropic directly, or your company's gateway.** Setup asks how Bookwyrm should reach
+Claude: with an Anthropic API key, or through a LiteLLM (or other OpenAI-compatible) gateway,
+given its address, the model name it uses for Claude, and your key. It checks the gateway before
+using it: the key works, the model exists, and it streams and calls tools, which Bookwyrm needs.
+Switch any time in the app under Settings → Model, or with
+`./install.sh --provider gateway --gateway-url https://… --gateway-model claude-sonnet` (key in
+`LITELLM_API_KEY`). The choice is kept in `~/.bookwyrm/settings.json`, so updates keep it. See
+[ADR 0005](docs/adr/0005-company-gateway.md).
 
 ## Layout
 

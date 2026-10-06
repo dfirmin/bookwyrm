@@ -6,8 +6,12 @@ For macOS 14 or later (Apple Silicon or Intel), Windows 10 or 11, and Linux desk
 
 You need two keys. Setup asks for both and checks them before going on.
 
-- **An Anthropic API key.** Get one at
-  [console.anthropic.com](https://console.anthropic.com/settings/keys).
+- **A way to reach Claude**, either of:
+  - **an Anthropic API key**, from
+    [console.anthropic.com](https://console.anthropic.com/settings/keys); or
+  - **your company's gateway** (LiteLLM, or another OpenAI-compatible endpoint): its address
+    (usually ending in `/v1`), the model name it uses for Claude, and your key for it. Ask
+    whoever runs the gateway.
 - **A fine-grained GitHub token for the knowledge repo.** Make one at
   [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new).
   - Under *Repository access*, choose *Only select repositories* and pick the knowledge repo.
@@ -95,6 +99,8 @@ an issue.
   and other people's). **Ask Bookwyrm** starts a conversation about any of them.
 - **Settings:**
   - your name and team;
+  - how Bookwyrm reaches Claude: Anthropic directly or your company's gateway (**Save and check**
+    tests a change before Bookwyrm uses it);
   - the knowledge repo and keys (changing these re-runs the relevant setup steps for you);
   - Bookwyrm's voice (press **Play** to hear one) and its speaking speed;
   - calls from Bookwyrm;
@@ -128,7 +134,8 @@ The card and Settings → *Voice service* say what's wrong.
 | "Bookwyrm is waking up" for more than a minute | The first start after setup loads the speech models. If it never finishes, check the log at `~/.bookwyrm/voice.log` (Windows: `%USERPROFILE%\.bookwyrm\voice.log`), then Settings → Voice service → **Restart** |
 | "Bookwyrm's brain (Hermes) isn't running" | In Terminal or PowerShell: `hermes gateway restart` |
 | "I can't reach the repo", or the Library shows a GitHub error | The token has expired or doesn't cover the repo. Settings → GitHub token → **Replace…** |
-| Bookwyrm can't answer anything | Check the Anthropic key: Settings → Anthropic API key → **Replace…** |
+| Bookwyrm can't answer anything | Settings → Model: check the Anthropic key, or the gateway address, model name and key. **Save and check** tests them |
+| Using a gateway: answers stop off the company network | The gateway is only reachable on the network or VPN. Speech still works; thinking needs the gateway |
 | "Voice isn't set up on this computer" | Run the install line again |
 | No sound from Bookwyrm | Check the computer's output device. The captions on the card show what it's saying |
 | It hears itself and cuts off | Use headphones, and tell us which computer and speakers |

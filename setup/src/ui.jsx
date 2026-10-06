@@ -1,4 +1,4 @@
-// The interactive wizard (Ink). Screens: welcome → about you → keys → install → done.
+// The interactive wizard (Ink). Screens: welcome → about you → model → keys → install → done.
 import { Box, Text, useApp, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
@@ -7,7 +7,8 @@ import { runSteps } from './engine.js';
 import { appReady, finish, needsAbout, needsKeys, openLaterHint } from './finish.js';
 import { STEPS } from './steps.js';
 import {
-  ANTHROPIC_KEY_URL, GITHUB_TOKEN_URL, REPO_RE, checkAnthropic, checkGitHub, detectState, existingKeys, selectedSteps,
+  ANTHROPIC_KEY_URL, GITHUB_TOKEN_URL, REPO_RE, checkAnthropic, checkGateway, checkGitHub, detectState, existingKeys,
+  normalizeGatewayUrl, selectedSteps,
 } from './state.js';
 import { addSecret, isMac, isWin, mask } from './sys.js';
 
@@ -154,6 +155,70 @@ function About({ ctx, onNext }) {
   );
 }
 
+// ---- how Bookwyrm reaches Claude --------------------------------------------------------------------------
+
+function Model({ ctx, onNext }) {
+  const a = ctx.answers;
+  const [phase, setPhase] = useState('choose');
+  const [values, setValues] = useState({ gatewayUrl: a.gatewayUrl || '', gatewayModel: a.gatewayModel || '' });
+  const [error, setError] = useState('');
+  if (phase === 'choose') {
+    return (
+      <Box flexDirection="column">
+        <Text>How should Bookwyrm reach Claude?</Text>
+        <Box marginTop={1}>
+          <Select
+            initial={a.provider === 'gateway' ? 1 : 0}
+            items={[
+              { label: 'Anthropic directly, with an Anthropic API key', value: 'anthropic' },
+              { label: 'My company\'s gateway (LiteLLM, or another OpenAI-compatible endpoint)', value: 'gateway' },
+            ]}
+            onSelect={(v) => {
+              a.provider = v;
+              if (v === 'gateway') setPhase('url');
+              else onNext();
+            }}
+          />
+        </Box>
+        <Hint>If your company gives you a LiteLLM address and key rather than an Anthropic key, choose the gateway.</Hint>
+      </Box>
+    );
+  }
+  const f = phase === 'url'
+    ? { key: 'gatewayUrl', label: 'Gateway address', placeholder: 'https://litellm.yourcompany.com/v1', help: 'The base URL your team uses for the gateway. It usually ends in /v1.' }
+    : { key: 'gatewayModel', label: 'Model name on the gateway', placeholder: 'claude-sonnet', help: 'What the gateway calls Claude. Ask whoever runs it if you\'re not sure; the key check lists what it offers.' };
+  return (
+    <Box flexDirection="column">
+      <Text>Your company's gateway</Text>
+      {phase === 'model' ? <Text><Text color="green">✓ </Text>Gateway address: <Text bold>{values.gatewayUrl}</Text></Text> : null}
+      <Field
+        key={f.key}
+        label={f.label}
+        help={f.help}
+        placeholder={f.placeholder}
+        value={values[f.key]}
+        onChange={(v) => { setError(''); setValues({ ...values, [f.key]: v }); }}
+        onSubmit={() => {
+          const v = values[f.key].trim();
+          if (phase === 'url') {
+            const url = normalizeGatewayUrl(v);
+            if (!/^https?:\/\/\S+$/.test(url)) return setError('That should be a web address starting with https://.');
+            setValues({ ...values, gatewayUrl: url });
+            setPhase('model');
+            return undefined;
+          }
+          if (!v) return setError('Please type the model name.');
+          Object.assign(a, { gatewayUrl: values.gatewayUrl, gatewayModel: v });
+          onNext();
+          return undefined;
+        }}
+        error={error}
+      />
+      <Hint>Enter to continue</Hint>
+    </Box>
+  );
+}
+
 // ---- keys ------------------------------------------------------------------------------------------------
 
 function KeyStep({ ctx, spec, onDone }) {
@@ -194,7 +259,9 @@ function KeyStep({ ctx, spec, onDone }) {
       )}
       {phase === 'enter' && (
         <>
-          <Text>Get one at: <Text color={ACCENT}>{spec.url}</Text></Text>
+          {/^https?:/.test(spec.url)
+            ? <Text>Get one at: <Text color={ACCENT}>{spec.url}</Text></Text>
+            : <Text dimColor>Don't have one? {spec.url[0].toUpperCase() + spec.url.slice(1)}.</Text>}
           <Field
             label={`Paste your ${spec.short}`}
             value={value}
@@ -233,8 +300,23 @@ function Keys({ ctx, onNext }) {
   const have = existingKeys(ctx.profile);
   const [which, setWhich] = useState(0);
   const repo = ctx.answers.repo;
-  const specs = [
-    {
+  const a = ctx.answers;
+  const modelSpec = a.provider === 'gateway'
+    ? {
+      title: 'Gateway key',
+      short: 'gateway key',
+      service: 'the gateway',
+      explain: [`Your key for ${a.gatewayUrl}. I'll check it can reach "${a.gatewayModel}" and that the model streams and calls tools.`],
+      url: 'ask whoever runs the gateway',
+      existing: have.gatewayKey,
+      check: async (k) => {
+        const r = await checkGateway(a.gatewayUrl, k, a.gatewayModel);
+        if (r.baseUrl) a.gatewayUrl = r.baseUrl;   // e.g. gained /v1
+        return r;
+      },
+      field: 'gatewayKey',
+    }
+    : {
       title: 'Anthropic API key',
       short: 'Anthropic API key',
       service: 'Anthropic',
@@ -243,7 +325,9 @@ function Keys({ ctx, onNext }) {
       existing: have.anthropicKey,
       check: checkAnthropic,
       field: 'anthropicKey',
-    },
+    };
+  const specs = [
+    modelSpec,
     {
       title: 'GitHub token',
       short: 'GitHub token',
@@ -442,17 +526,18 @@ function Done({ ctx, failed }) {
 
 export function Wizard({ ctx }) {
   const chosen = selectedSteps(ctx.opts);
-  const screens = ['welcome', ...(needsAbout(chosen) ? ['about'] : []), ...(needsKeys(chosen) ? ['keys'] : []), 'install', 'done'];
+  const screens = ['welcome', ...(needsAbout(chosen) ? ['about'] : []), ...(needsKeys(chosen) ? ['model', 'keys'] : []), 'install', 'done'];
   const [n, setN] = useState(0);
   const [failed, setFailed] = useState([]);
   const screen = screens[n];
   const next = () => setN((v) => v + 1);
-  const titles = { welcome: '', about: 'About you', keys: 'Keys', install: ctx.opts.dryRun ? 'Plan' : 'Installing', done: 'Done' };
+  const titles = { welcome: '', about: 'About you', model: 'Model', keys: 'Keys', install: ctx.opts.dryRun ? 'Plan' : 'Installing', done: 'Done' };
   return (
     <Box flexDirection="column" paddingX={1} paddingTop={1}>
       <Header step={titles[screen]} dryRun={ctx.opts.dryRun} />
       {screen === 'welcome' && <Welcome ctx={ctx} onNext={next} />}
       {screen === 'about' && <About ctx={ctx} onNext={next} />}
+      {screen === 'model' && <Model ctx={ctx} onNext={next} />}
       {screen === 'keys' && <Keys ctx={ctx} onNext={next} />}
       {(screen === 'install' || screen === 'done') && (
         // Stays on screen under Done, so the finished checklist (or the dry-run plan) remains readable.

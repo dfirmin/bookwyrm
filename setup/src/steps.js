@@ -64,8 +64,29 @@ export function loadLauncher() {
 
 // ---- 4. profile rendering (port of the old scripts/install.sh) ----------------------------------
 
-export function renderProfileFile(text, { skillsDir, repo, mcpBin, isConfig }) {
+/** The profile's model: block for a company gateway (Hermes' "custom" provider). */
+export function gatewayModelBlock({ gatewayUrl, gatewayModel }) {
+  return [
+    'model:',
+    '  # Your company\'s gateway (LiteLLM or any OpenAI-compatible endpoint), chosen in Bookwyrm',
+    '  # setup or Settings. Its key is LITELLM_API_KEY in this profile\'s .env.',
+    '  provider: "custom"',
+    `  default: ${JSON.stringify(gatewayModel)}`,
+    `  base_url: ${JSON.stringify(gatewayUrl)}`,
+    '  api_key_env: "LITELLM_API_KEY"',
+    '',
+  ].join('\n');
+}
+
+// The model: block and the lines indented under it, up to the next top-level line.
+const MODEL_BLOCK = /^model:\n(?:(?:[ \t]+.*)?\n)*?(?=^\S)/m;
+
+export function renderProfileFile(text, { skillsDir, repo, mcpBin, isConfig, model }) {
   text = text.replace(/\r\n/g, '\n');
+  if (isConfig && model?.provider === 'gateway') {
+    if (!MODEL_BLOCK.test(text)) throw new StepError('profile/config.yaml has changed shape: its model block is missing.', 'Tell whoever maintains Bookwyrm; this is a bug in the repo, not on your machine.');
+    text = text.replace(MODEL_BLOCK, `${gatewayModelBlock(model)}\n`);
+  }
   // JSON strings are valid YAML double-quoted strings, so Windows backslashes stay intact.
   text = text.split('"__BOOKWYRM_SKILLS__"').join(JSON.stringify(skillsDir));
   text = text.split('__BOOKWYRM_SKILLS__').join(skillsDir);
@@ -175,8 +196,10 @@ export const STEPS = [
       const dir = profileDir(ctx.profile);
       const out = [];
       if (!fs.existsSync(dir)) out.push(`hermes profile create ${ctx.profile} --no-skills --description "…"`);
-      out.push(`render profile/config.yaml and SOUL.md into ${dir} (repo ${ctx.answers.repo || '?'}, GitHub connector ${mcpBinFor(ctx)})`);
-      const keys = [ctx.answers.anthropicKey && 'ANTHROPIC_API_KEY', ctx.answers.githubToken && 'GITHUB_PERSONAL_ACCESS_TOKEN'].filter(Boolean);
+      const a = ctx.answers;
+      const via = a.provider === 'gateway' ? `your gateway ${a.gatewayUrl || '?'} as "${a.gatewayModel || '?'}"` : 'Anthropic directly';
+      out.push(`render profile/config.yaml and SOUL.md into ${dir} (repo ${a.repo || '?'}, Claude via ${via}, GitHub connector ${mcpBinFor(ctx)})`);
+      const keys = [a.anthropicKey && 'ANTHROPIC_API_KEY', a.gatewayKey && 'LITELLM_API_KEY', a.githubToken && 'GITHUB_PERSONAL_ACCESS_TOKEN'].filter(Boolean);
       out.push(keys.length ? `write ${keys.join(', ')} into ${path.join(dir, '.env')} (other lines kept)` : `keep the keys in ${path.join(dir, '.env')}`);
       return out;
     },
@@ -194,7 +217,12 @@ export const STEPS = [
       const mcpBin = mcpBinFor(ctx);
       const useBin = fs.existsSync(mcpBin);
       if (!useBin) io.log(`GitHub connector not found at ${mcpBin}; keeping the Docker launch`);
-      const vars = { skillsDir: path.join(paths.repo, 'skills'), repo, mcpBin: useBin ? mcpBin : '' };
+      const a = ctx.answers;
+      if (a.provider === 'gateway' && !(a.gatewayUrl && a.gatewayModel)) {
+        throw new StepError('To use your company\'s gateway I need its address and the model name.', 'Run setup again and fill them in, or pass --gateway-url and --gateway-model.');
+      }
+      const model = { provider: a.provider, gatewayUrl: a.gatewayUrl, gatewayModel: a.gatewayModel };
+      const vars = { skillsDir: path.join(paths.repo, 'skills'), repo, mcpBin: useBin ? mcpBin : '', model };
       let changed = false;
       for (const [file, isConfig] of [['config.yaml', true], ['SOUL.md', false]]) {
         const text = renderProfileFile(readText(path.join(paths.repo, 'profile', file)), { ...vars, isConfig });
@@ -204,6 +232,7 @@ export const STEPS = [
       const envFile = path.join(dir, '.env');
       const values = {};
       if (ctx.answers.anthropicKey) values.ANTHROPIC_API_KEY = ctx.answers.anthropicKey;
+      if (ctx.answers.gatewayKey) values.LITELLM_API_KEY = ctx.answers.gatewayKey;
       if (ctx.answers.githubToken) values.GITHUB_PERSONAL_ACCESS_TOKEN = ctx.answers.githubToken;
       const current = readText(envFile) ?? '';
       if (!/^GITHUB_PERSONAL_ACCESS_TOKEN=/m.test(current)) {
@@ -220,7 +249,8 @@ export const STEPS = [
       if (changed) ctx.gatewayRestart = true;
 
       const env = readEnvFile(envFile);
-      const missing = ['ANTHROPIC_API_KEY', 'GITHUB_PERSONAL_ACCESS_TOKEN'].filter((k) => !env[k]);
+      const modelKey = a.provider === 'gateway' ? 'LITELLM_API_KEY' : 'ANTHROPIC_API_KEY';
+      const missing = [modelKey, 'GITHUB_PERSONAL_ACCESS_TOKEN'].filter((k) => !env[k]);
       if (missing.length) return { warn: `No ${missing.join(' or ')} yet: Bookwyrm can't work without ${missing.length > 1 ? 'them' : 'it'}. Run setup again to add ${missing.length > 1 ? 'them' : 'it'}.` };
       return { note: changed ? `updated ${dir}` : 'up to date' };
     },
@@ -273,9 +303,12 @@ export const STEPS = [
 
   {
     id: 'check',
-    title: 'Check Bookwyrm can reach your repo',
+    title: 'Check Bookwyrm can think and reach your repo',
     detect: () => ({ done: false }),
-    plan: (ctx) => [`hermes -p ${ctx.profile} mcp test github   (installs Hermes' MCP extra if needed: hermes pm install --extra mcp)`],
+    plan: (ctx) => [
+      `hermes -p ${ctx.profile} mcp test github   (installs Hermes' MCP extra if needed: hermes pm install --extra mcp)`,
+      `ask Bookwyrm to say "ready" through http://127.0.0.1:${HERMES_PORT}/p/${ctx.profile}/v1/runs (proves the model setting works)`,
+    ],
     async run(ctx, io) {
       requireHermes(ctx);
       const test = () => run(ctx.hermes, ['-p', ctx.profile, 'mcp', 'test', 'github'], { onLine: io.log, timeoutMs: 3 * 60_000 });
@@ -293,7 +326,9 @@ export const STEPS = [
           : `Check the token in ${path.join(profileDir(ctx.profile), '.env')} covers the repo, then retry.`, res.lines.slice(-12));
       }
       const tools = res.lines.find((l) => /Tools discovered/i.test(l));
-      return { note: tools ? tools.replace(/^[^A-Za-z]*/, '') : 'connected' };
+      const think = await thinkCheck(ctx, io);
+      if (think.warn) return { warn: `${tools ? 'GitHub connected. ' : ''}${think.warn}` };
+      return { note: `${tools ? tools.replace(/^[^A-Za-z]*/, '') : 'GitHub connected'}; ${think.note}` };
     },
   },
 
@@ -404,6 +439,48 @@ export const STEPS = [
 
 export const STEP_IDS = STEPS.map((s) => s.id);
 
+/**
+ * One tiny Hermes run on the profile: proves the model settings (Anthropic or the gateway) work
+ * end to end, through Hermes itself. Hermes not answering yet is a warning, not a failure: the
+ * api step already said so. A run that fails is a real problem with the model settings.
+ */
+async function thinkCheck(ctx, io) {
+  const key = readEnvFile(path.join(profileDir(ctx.profile), '.env')).API_SERVER_KEY;
+  const base = `http://127.0.0.1:${HERMES_PORT}/p/${ctx.profile}/v1`;
+  if (!key || !(await httpAlive(`http://127.0.0.1:${HERMES_PORT}/`))) {
+    return { warn: 'Hermes\' background service isn\'t answering, so I couldn\'t check Bookwyrm can think. Run: hermes gateway restart' };
+  }
+  const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+  try {
+    io.log('Asking Bookwyrm to say "ready"…');
+    const start = await fetch(`${base}/runs`, {
+      method: 'POST', headers, signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify({ input: 'Reply with the single word: ready', session_id: `setup-check-${Date.now()}`, instructions: 'This is an automated setup check. Do not use any tools.' }),
+    });
+    if (!start.ok) return { warn: `Hermes wouldn't start a check run (HTTP ${start.status}). Try: hermes gateway restart` };
+    const { run_id: runId } = await start.json();
+    const events = await fetch(`${base}/runs/${runId}/events`, { headers, signal: AbortSignal.timeout(120_000) });
+    let said = '';
+    for (const line of (await events.text()).split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      let ev;
+      try { ev = JSON.parse(line.slice(5)); } catch { continue; }
+      if (ev.event === 'message.delta' && ev.delta) said += ev.delta;
+      if (ev.event === 'run.failed') {
+        const why = String(ev.error?.message || ev.error || ev.message || 'no reason given').split('\n')[0].slice(0, 300);
+        throw new StepError(`Bookwyrm couldn't think: the model call failed (${why}).`, ctx.answers.provider === 'gateway'
+          ? 'Check the gateway address, model name and key (Settings → Model in the app, or run setup again).'
+          : 'Check the Anthropic key (Settings in the app, or run setup again).');
+      }
+    }
+    if (!said.trim()) return { warn: 'Bookwyrm\'s check run finished without saying anything. If it doesn\'t answer on a call, check the model settings.' };
+    return { note: `Bookwyrm answered "${said.trim().slice(0, 40)}"` };
+  } catch (err) {
+    if (err instanceof StepError) throw err;
+    return { warn: `Couldn't finish the thinking check (${err.message}).` };
+  }
+}
+
 function voiceHash() {
   return sha256(readText(path.join(paths.voice, 'pyproject.toml')) || '');
 }
@@ -423,11 +500,14 @@ function mcpBinFor(ctx) {
 const SETTINGS_DEFAULTS = { voice: 'af_heart', voice_speed: 1.0, calls_you: false, watch_minutes: 5 };
 
 function settingsPatch(ctx) {
-  const { name, team, repo } = ctx.answers;
+  const { name, team, repo, provider, gatewayUrl, gatewayModel } = ctx.answers;
   const patch = { profile: ctx.profile };
   if (name) patch.name = name;
   if (team) patch.team = team;
   if (repo) patch.repo = repo;
+  // Remembered so the next setup run (and every update) keeps the same way of reaching Claude.
+  if (provider === 'gateway') patch.model = { provider, base_url: gatewayUrl, name: gatewayModel };
+  else if (provider) patch.model = { provider: 'anthropic' };
   return patch;
 }
 

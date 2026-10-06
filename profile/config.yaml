@@ -11,8 +11,9 @@ model:
   provider: "anthropic"
   default: "claude-sonnet-5-5"
 
-  # LiteLLM gateway, or any OpenAI-compatible endpoint: comment out the two lines above and use
-  # these. Put the gateway key in .env as LITELLM_API_KEY.
+  # A company gateway (LiteLLM or any OpenAI-compatible endpoint) is chosen in setup or the app's
+  # Settings → Model, which writes this block for you (provider "custom"). By hand it looks like
+  # this, with the gateway key in .env as LITELLM_API_KEY:
   # provider: "custom"
   # default: "claude-sonnet-5-5"        # the model name your gateway exposes
   # base_url: "https://litellm.example.internal/v1"

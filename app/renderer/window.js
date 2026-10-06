@@ -414,6 +414,11 @@ async function loadSettings() {
   $("repo-apply").hidden = true;
   keyStatus("github-status", settings.keys.github);
   keyStatus("anthropic-status", settings.keys.anthropic);
+  keyStatus("gateway-status", settings.keys.gateway);
+  form.provider.value = settings.model.provider;
+  form.gateway_url.value = settings.model.base_url || "";
+  form.gateway_model.value = settings.model.name || "";
+  showModelRows();
   $("login-item").checked = await bw.loginItem();
   $("show-robot").checked = await bw.companionVisible();
   const info = await bw.appInfo();
@@ -469,6 +474,62 @@ $("voice-restart").addEventListener("click", async () => {
   setTimeout(healthLine, 3000);
 });
 
+// ---- how Bookwyrm reaches Claude
+
+function modelDraft() {
+  return {
+    provider: form.provider.value,
+    gatewayUrl: form.gateway_url.value.trim().replace(/\/+$/, ""),
+    gatewayModel: form.gateway_model.value.trim(),
+  };
+}
+
+function modelChanged() {
+  if (!settings) return false;
+  const d = modelDraft();
+  const m = settings.model;
+  if (d.provider !== m.provider) return true;
+  return d.provider === "gateway" && (d.gatewayUrl !== (m.base_url || "") || d.gatewayModel !== (m.name || ""));
+}
+
+function showModelRows() {
+  const p = form.provider.value;
+  for (const el of form.querySelectorAll("[data-for]")) el.hidden = el.dataset.for !== p;
+  for (const el of form.querySelectorAll("[data-entry=gatewayKey], [data-entry=anthropicKey]")) {
+    if ((el.dataset.entry === "gatewayKey") !== (p === "gateway")) el.hidden = true;
+  }
+  $("model-apply-row").hidden = !modelChanged();
+}
+
+for (const name of ["provider", "gateway_url", "gateway_model"]) {
+  form[name].addEventListener("input", showModelRows);
+  form[name].addEventListener("change", showModelRows);
+}
+
+$("model-apply").addEventListener("click", () => applyModel());
+
+function applyModel(newKey = null) {
+  const d = modelDraft();
+  const keyField = d.provider === "gateway" ? "gatewayKey" : "anthropicKey";
+  const entry = form.querySelector(`[data-entry="${keyField}"]`);
+  const typed = newKey ?? entry.querySelector("input").value.trim();
+  if (d.provider === "gateway") {
+    if (!/^https?:\/\/\S+$/.test(d.gatewayUrl)) { saved("The gateway address should start with https://."); form.gateway_url.focus(); return; }
+    if (!d.gatewayModel) { saved("Type the model name the gateway uses for Claude."); form.gateway_model.focus(); return; }
+  }
+  const haveKey = d.provider === "gateway" ? settings.keys.gateway : settings.keys.anthropic;
+  if (!typed && !haveKey) {
+    entry.hidden = false;
+    entry.querySelector("input").focus();
+    saved(d.provider === "gateway" ? "Enter the gateway key, then Save." : "Enter your Anthropic API key, then Save.");
+    return;
+  }
+  entry.querySelector("input").value = "";
+  entry.hidden = true;
+  applySetup({ ...d, ...(typed ? { [keyField]: typed } : {}) },
+    d.provider === "gateway" ? `Connecting Bookwyrm to ${d.gatewayUrl} as "${d.gatewayModel}"…` : "Connecting Bookwyrm to Anthropic directly…");
+}
+
 // Repo and keys go through the setup wizard: they change Bookwyrm's Hermes profile too.
 form.repo.addEventListener("input", () => { $("repo-apply").hidden = form.repo.value.trim() === settings?.repo; });
 $("repo-apply").addEventListener("click", () => {
@@ -482,6 +543,8 @@ for (const row of form.querySelectorAll("[data-key]")) {
   entry.querySelector(".save-key").addEventListener("click", () => {
     const value = entry.querySelector("input").value.trim();
     if (!value) return;
+    // A model key goes with the model settings on screen, so the two are checked together.
+    if (row.dataset.key !== "githubToken") { applyModel(value); return; }
     entry.querySelector("input").value = "";
     entry.hidden = true;
     applySetup({ [row.dataset.key]: value }, "Saving the key and checking it works…");

@@ -11,27 +11,16 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
 import httpx
 from loguru import logger
 
-STATE_DIR = Path.home() / ".bookwyrm"
-PREFS = STATE_DIR / "prefs.json"
+from .config import Settings, data_dir
+
+STATE_DIR = data_dir()
 SEEN = STATE_DIR / "seen-issues.json"
-
-
-def load_prefs() -> dict:
-    try:
-        return json.loads(PREFS.read_text())
-    except Exception:
-        return {"calls_you": False}
-
-
-def save_prefs(prefs: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    PREFS.write_text(json.dumps(prefs, indent=2))
 
 
 @dataclass
@@ -80,17 +69,27 @@ def classify(issue: dict) -> Reason | None:
 
 
 class Watcher:
-    def __init__(self, repo: str, token: str, every_minutes: float = 5.0):
-        self.repo, self.token, self.every = repo, token, every_minutes * 60
+    """``settings`` is called on every check, so changes made in the app apply without a restart."""
+
+    def __init__(self, settings: Callable[[], Settings]):
+        self._settings = settings
         self.subscribers: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
+
+    @property
+    def repo(self) -> str:
+        return self._settings().repo
+
+    @property
+    def token(self) -> str:
+        return self._settings().github_token
 
     @property
     def configured(self) -> bool:
         return bool(self.repo and self.token)
 
     def start(self):
-        if self.configured and not self._task:
+        if not self._task:
             self._task = asyncio.create_task(self._loop())
 
     async def stop(self):
@@ -100,7 +99,8 @@ class Watcher:
     async def _loop(self):
         while True:
             try:
-                if load_prefs().get("calls_you"):
+                s = self._settings()
+                if s.calls_you and self.configured:
                     for reason in await self.check():
                         logger.info(f"Calling the owner: {reason.headline} (#{reason.issue})")
                         for q in list(self.subscribers):
@@ -109,7 +109,7 @@ class Watcher:
                     SEEN.unlink(missing_ok=True)  # when switched on later, start fresh
             except Exception as e:
                 logger.warning(f"Repo watch failed: {e}")
-            await asyncio.sleep(self.every)
+            await asyncio.sleep(max(1.0, self._settings().watch_minutes) * 60)
 
     async def check(self) -> list[Reason]:
         async with httpx.AsyncClient(timeout=20) as client:

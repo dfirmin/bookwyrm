@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from bookwyrm_voice.config import Settings  # noqa: E402
 from bookwyrm_voice import watch  # noqa: E402
 from bookwyrm_voice.echo import EchoGuard, SpokenLog  # noqa: E402
 
@@ -75,7 +76,7 @@ class _Resp:
 
 def test_watcher():
     tmp = Path(tempfile.mkdtemp())
-    watch.STATE_DIR, watch.SEEN, watch.PREFS = tmp, tmp / "seen.json", tmp / "prefs.json"
+    watch.STATE_DIR, watch.SEEN = tmp, tmp / "seen.json"
     gap8 = _issue(8, "[security] Phishing Credential Harvest Response — missing_escalation")
     q19 = _issue(19, "Quarantined: social-media-guidelines.md", ["quarantine"])
     batches = [
@@ -91,7 +92,7 @@ def test_watcher():
     expected = [[], [("quarantine", 30)], [("gap", 31)], []]
 
     async def run():
-        w = watch.Watcher("o/r", "token")
+        w = watch.Watcher(lambda: Settings(repo="o/r", github_token="token", calls_you=True))
         for batch, want in zip(batches, expected):
             async def fake_get(*_a, _b=batch, **_k):
                 return _Resp(_b)

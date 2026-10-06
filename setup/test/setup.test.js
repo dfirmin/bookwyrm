@@ -18,7 +18,8 @@ const sys = await import('../src/sys.js');
 const steps = await import('../src/steps.js');
 const state = await import('../src/state.js');
 
-const config = fs.readFileSync(path.join(sys.paths.repo, 'profile', 'config.yaml'), 'utf8');
+// LF here whatever the checkout used (git on Windows may give CRLF); the CRLF test adds its own.
+const config = fs.readFileSync(path.join(sys.paths.repo, 'profile', 'config.yaml'), 'utf8').replace(/\r\n/g, '\n');
 
 test('paths live under the (temp) home', () => {
   assert.equal(sys.paths.bookwyrm, path.join(home, '.bookwyrm'));

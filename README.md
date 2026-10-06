@@ -26,8 +26,20 @@ that a concept body restates its sources and adds nothing to them. A source note
 true, keeps who-said-what auditable, and lets the engine's verifier, gap and scoring stages run
 on the new content. See [ADR 0002](docs/adr/0002-sme-statements-enter-as-sources.md).
 
-Not in v0: the Teams bot, a meeting bot, the desktop mascot and voice, Postgres memory, and
-dispatching Archivist runs. Each can attach later without changing the core (see
+**Call it.** A small book-dragon sits on the edge of your screen. Click it and it rings, picks up
+and talks, with a natural voice, live captions, and you can cut in whenever you like. It can also
+call *you* when something new lands in quarantine or a new gap is filed (off unless you switch it
+on). Speech is heard and spoken on your machine; only text goes to the model. See
+[ADR 0003](docs/adr/0003-voice-companion.md).
+
+<p>
+  <img src="docs/img/companion-docked.png" alt="The Bookwyrm dragon, docked" height="200">
+  <img src="docs/img/companion-on-call.png" alt="A call in progress, with live captions on the card" height="320">
+  <img src="docs/img/companion-incoming.png" alt="Bookwyrm calling about a new quarantined document" height="320">
+</p>
+
+Not yet: the Teams bot, a meeting bot, Postgres memory, and dispatching Archivist runs. Each can
+attach later without changing the core (see
 [ADR 0001](docs/adr/0001-hermes-runtime-github-tools-sqlite-memory.md)).
 
 ## How it's built
@@ -45,7 +57,7 @@ dispatching Archivist runs. Each can attach later without changing the core (see
 
 ## Setup
 
-**On a Mac with voice and the desktop mascot:** follow [docs/setup-macos.md](docs/setup-macos.md).
+**On a Mac, including the voice companion:** follow [docs/setup-macos.md](docs/setup-macos.md).
 The steps below are the general version.
 
 Requirements: Python 3.11+, Docker or the GitHub MCP server's release binary (see below), and
@@ -100,8 +112,13 @@ installer, which wires it in place of Docker (and keeps doing so on every re-run
 ## Layout
 
 ```
-profile/            Hermes profile template: config.yaml, SOUL.md, .env.example
-skills/             Bookwyrm's skills (loaded read-only via skills.external_dirs)
-scripts/install.sh  Creates or refreshes the bookwyrm profile
-docs/adr/           Decisions
+profile/                 Hermes profile template: config.yaml, SOUL.md, .env.example
+skills/                  Bookwyrm's skills (loaded read-only via skills.external_dirs)
+voice/                   The call service: Pipecat pipeline, Hermes adapter, local speech models
+voice/prompts/           How Bookwyrm talks on a call
+app/                     The desktop companion (Electron): the dragon, the ring, the call card
+scripts/install.sh       Creates or refreshes the bookwyrm profile
+scripts/setup-voice.sh   Sets up the call service and the companion app
+docs/adr/                Decisions
+docs/live-proof/         What was run and what it showed
 ```

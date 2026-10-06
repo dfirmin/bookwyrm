@@ -74,8 +74,9 @@ The robot sits at the bottom right of your screen and stays on top of other wind
   - **Open Bookwyrm.** The full window (below).
   - **Library.** What needs you in the repo.
   - **Let Bookwyrm call me.** See below.
-  - **Hide robot.** It stays in the menu bar (macOS) or system tray (Windows); click that icon
-    to bring it back.
+  - **Hide robot.** Bookwyrm keeps running (it can still call you). To bring the robot back, press
+    **⌃⌥B** (Ctrl+Alt+B on Windows), open Bookwyrm again from Spotlight, Applications or the
+    Start menu, or use its menu-bar / tray icon. Quitting and reopening always brings it back.
   - **Quit Bookwyrm.**
 - **During a call**, the card has these buttons:
   - **mute**;

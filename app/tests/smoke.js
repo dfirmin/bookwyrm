@@ -8,6 +8,8 @@ const path = require("node:path");
 
 process.env.BOOKWYRM_NO_MIC_PROMPT = "1";
 process.env.BOOKWYRM_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "bw-smoke-"));
+// As if the robot was hidden when Bookwyrm last quit: it must still come up visible.
+fs.writeFileSync(path.join(process.env.BOOKWYRM_HOME, "companion.json"), JSON.stringify({ hidden: true }));
 const { app, BrowserWindow, ipcMain, screen } = require("electron");
 require("../main.js");
 
@@ -20,6 +22,7 @@ app.whenReady().then(async () => {
   await wait(2500);
   const [companion] = BrowserWindow.getAllWindows();
   check(!!companion, "companion window exists");
+  check(companion.isVisible(), "a robot hidden last time is back after a restart");
   const { workArea: wa } = screen.getPrimaryDisplay();
   const b0 = companion.getBounds();
   check(b0.width === 76 && b0.x + b0.width <= wa.x + wa.width && b0.x > wa.x + wa.width / 2, `robot docked on the right (${JSON.stringify(b0)})`);
@@ -74,6 +77,20 @@ app.whenReady().then(async () => {
     await hide({ sender: win.webContents }, true);
     check(companion.isVisible(), "and comes back");
   }
+
+  // Hidden, then Bookwyrm opened again (Spotlight, Applications, Start menu): the robot returns.
+  if (hide) {
+    await hide({ sender: win.webContents }, false);
+    app.emit("second-instance", {}, [], process.cwd());
+    await wait(500);
+    check(companion.isVisible(), "opening Bookwyrm again brings a hidden robot back");
+    await hide({ sender: win.webContents }, false);
+    await wait(2500);   // past start-up, when macOS's "activate" means the app was reopened
+    app.emit("activate", {}, false);
+    await wait(500);
+    check(companion.isVisible(), "so does macOS reopening the running app");
+  }
+
 
   console.log(failures ? `${failures} FAILED` : "all passed");
   app.exit(failures ? 1 : 0);

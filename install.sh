@@ -23,7 +23,7 @@ main() {
   fail() { printf '\nBookwyrm setup stopped: %s\n' "$*" >&2; exit 1; }
 
   # ---- Node.js -------------------------------------------------------------------------------------
-  node_ok() {  # node_ok /path/to/node → is it 22.12 or newer?
+  node_ok() {  # node_ok /path/to/node -> is it 22.12 or newer?
     [ -x "$1" ] || return 1
     "$1" -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>$node_min_major||(a===$node_min_major&&b>=$node_min_minor)?0:1)" 2>/dev/null
   }
@@ -55,7 +55,7 @@ main() {
     tmp="$(mktemp -d)"
     # shellcheck disable=SC2064  # expand $tmp now
     trap "rm -rf '$tmp'" RETURN
-    say "Getting Node.js 22 for $os-$arch (about 50 MB)…"
+    say "Getting Node.js 22 for $os-$arch (about 50 MB)..."
     curl -fsSL "$base/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt" || fail "couldn't reach $base to download Node.js"
     sums="$(grep -E "  node-v22\.[0-9]+\.[0-9]+-$os-$arch\.tar\.gz\$" "$tmp/SHASUMS256.txt" | head -n1)" || true
     [ -n "$sums" ] || fail "$base has no Node.js 22 build for $os-$arch"
@@ -97,7 +97,7 @@ main() {
 
   fetch_tarball() {  # unpack the branch's source over $1 (keeps .venv, node_modules and the like)
     mkdir -p "$1"
-    say "Downloading Bookwyrm…"
+    say "Downloading Bookwyrm..."
     curl -fsSL "$repo_url/archive/refs/heads/$branch.tar.gz" | tar -xz -C "$1" --strip-components=1 \
       || fail "couldn't download Bookwyrm from GitHub"
   }
@@ -111,7 +111,7 @@ main() {
   else
     dir="${BOOKWYRM_DIR:-$HOME/bookwyrm}"
     if [ -d "$dir/.git" ] && is_bookwyrm "$dir"; then
-      say "Updating Bookwyrm in $dir…"
+      say "Updating Bookwyrm in $dir..."
       if ! { has_git && git -C "$dir" pull --ff-only --quiet; }; then
         say "(Couldn't update it automatically; carrying on with the copy that's there.)"
       fi
@@ -120,7 +120,7 @@ main() {
     elif [ -e "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
       fail "$dir already exists and isn't Bookwyrm. Set BOOKWYRM_DIR to another folder and run this again."
     elif has_git; then
-      say "Getting Bookwyrm into $dir…"
+      say "Getting Bookwyrm into $dir..."
       git clone --quiet --branch "$branch" "$repo_url.git" "$dir" || fail "git clone failed"
     else
       fetch_tarball "$dir"
@@ -137,7 +137,7 @@ main() {
   local lock_hash stamp="node_modules/.bookwyrm-installed"
   lock_hash="$("$node" -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('package-lock.json')).digest('hex'))")"
   if [ ! -f "$stamp" ] || [ "$(cat "$stamp")" != "$lock_hash" ]; then
-    say "Preparing the setup wizard…"
+    say "Preparing the setup wizard..."
     npm_run ci --no-audit --no-fund --loglevel=error >/dev/null || fail "couldn't install the setup wizard (npm ci in $dir/setup)"
     printf '%s' "$lock_hash" > "$stamp"
   else

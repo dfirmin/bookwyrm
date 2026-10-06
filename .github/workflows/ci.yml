@@ -35,6 +35,21 @@ jobs:
           path: ~/.bookwyrm/models
           key: speech-models-parakeet-tdt-0.6b-v2-int8-kokoro-multi-lang-v1_0
 
+      # Exactly the README's first run on a Mac: Apple's own /bin/bash (3.2, from 2007), the script
+      # piped in, a clean environment, no Bookwyrm folder yet. (Caught: bash 3.2 reading "$dir…"
+      # as a variable named "dir" plus the first byte of "…".)
+      - name: First install as on a fresh Mac (bash 3.2, piped, dry run)
+        if: runner.os == 'macOS'
+        run: |
+          /bin/bash --version | head -1
+          fresh="$RUNNER_TEMP/fresh"
+          env -i HOME="$RUNNER_TEMP/fresh-home" PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=xterm-256color LANG=en_US.UTF-8 \
+            BOOKWYRM_DIR="$fresh/bookwyrm" BOOKWYRM_BRANCH="${{ github.head_ref || github.ref_name }}" \
+            /bin/bash -c 'cat install.sh | /bin/bash -s -- --yes --plain --dry-run --no-open' 2>&1 | tee "$RUNNER_TEMP/fresh-install.log"
+          grep -q "Dry run finished" "$RUNNER_TEMP/fresh-install.log"
+          test -f "$fresh/bookwyrm/setup/dist/setup.mjs"
+          ! grep -q "unbound variable" "$RUNNER_TEMP/fresh-install.log"
+
       # The real one-line installers, run from this checkout. They fetch their own Node 22 when
       # the machine's is missing or too old, as on a fresh laptop.
       - name: Install (macOS, Linux)
@@ -110,7 +125,9 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         working-directory: app
-        run: npx electron tests/screenshots.js "$RUNNER_TEMP/shots" ${{ matrix.shots }}
+        run: |
+          set -o pipefail
+          npx electron tests/screenshots.js "$RUNNER_TEMP/shots" ${{ matrix.shots }} 2>&1 | tee "$RUNNER_TEMP/screenshots.log"
 
       - uses: actions/upload-artifact@v4
         if: runner.os != 'Linux'

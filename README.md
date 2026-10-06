@@ -57,57 +57,57 @@ attach later without changing the core (see
 
 ## Setup
 
-**On a Mac, including the voice companion:** follow [docs/setup-macos.md](docs/setup-macos.md).
-The steps below are the general version.
+Before you start, have two things ready:
 
-Requirements: Python 3.11+, Docker or the GitHub MCP server's release binary (see below), and
-Hermes Agent installed so `hermes` is on your PATH.
+- **An Anthropic API key** ([console.anthropic.com](https://console.anthropic.com/settings/keys)).
+- **A fine-grained GitHub token** ([make one](https://github.com/settings/personal-access-tokens/new))
+  that can reach *only* the knowledge repo, with Contents, Issues and Pull requests set to
+  read and write. The token is the real fence on what Bookwyrm can touch.
 
-1. **Protect the knowledge repo's `main`.** Require a pull request before merging. Bookwyrm's
-   rules say it only works through PRs; branch protection is what makes that true.
-2. **Create a fine-grained GitHub token** scoped to *only* the knowledge repo, with
-   Contents, Issues and Pull requests set to read and write. The token is the real fence on
-   what Bookwyrm can touch.
-3. **Install the profile:**
-
-   ```bash
-   ./scripts/install.sh --repo dfirmin/archivist-knowledge-01
-   ```
-
-   This creates the `bookwyrm` Hermes profile (and a `bookwyrm` command), points it at this
-   repo's `skills/`, and writes the target repo into `SOUL.md`.
-4. **Add secrets** to `~/.hermes/profiles/bookwyrm/.env` (template: `profile/.env.example`):
-   `GITHUB_PERSONAL_ACCESS_TOKEN`, plus `ANTHROPIC_API_KEY` or your gateway key.
-5. **Pick a model:** edit `model:` in `~/.hermes/profiles/bookwyrm/config.yaml` — direct
-   Anthropic is the default; the LiteLLM block is there commented out.
-6. **Check the GitHub tools connect:**
-
-   ```bash
-   hermes -p bookwyrm mcp test github
-   ```
-
-   It should list the server's tools. If it says the `mcp` Python SDK is not installed, run
-   `hermes setup` and turn on MCP support (Hermes keeps it optional), then test again. Without
-   it Bookwyrm still starts, but with no GitHub tools: it will tell you it can't reach the repo.
-7. **Talk to it:**
-
-   ```bash
-   bookwyrm chat
-   ```
-
-   At startup Hermes may print `Warning: Unknown toolsets: mcp-github`. That is a start-up
-   ordering message (the toolset is named before the MCP server has connected); the tools are
-   there once the server connects. `mcp test github` above is the real check.
-
-Re-run `install.sh` after pulling changes to `profile/`; it keeps your `.env` and memory.
-
-**No Docker?** Use the GitHub MCP server's release binary
-([releases](https://github.com/github/github-mcp-server/releases)) and pass its path to the
-installer, which wires it in place of Docker (and keeps doing so on every re-run):
+Then run one line. **macOS or Linux** (Terminal):
 
 ```bash
-./scripts/install.sh --repo dfirmin/archivist-knowledge-01 --github-mcp-bin ~/bin/github-mcp-server
+curl -fsSL https://raw.githubusercontent.com/dfirmin/bookwyrm/main/install.sh | bash
 ```
+
+**Windows 10/11** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/dfirmin/bookwyrm/main/install.ps1 | iex
+```
+
+A setup wizard asks for your name, team, knowledge repo and the two keys (it checks them as you
+go), then installs everything with a checklist: Hermes Agent, the GitHub MCP server, the
+`bookwyrm` Hermes profile, Hermes' local API, the voice service and its speech models (about
+1 GB, once), and the companion app, which it adds to Applications / the Start menu / your app
+menu. It fetches Node.js 22 for itself if you don't have it, and keeps Bookwyrm in `~/bookwyrm`
+(`BOOKWYRM_DIR` to change). Your settings go to `~/.bookwyrm/settings.json`; the keys only to the
+profile's own `.env`.
+
+Run the same line again any time, for example after an update: it skips what's done. From a
+clone, `./install.sh` (or `.\install.ps1`) does the same with that clone.
+
+For scripts and CI:
+
+```bash
+ANTHROPIC_API_KEY=... GITHUB_PERSONAL_ACCESS_TOKEN=... \
+  ./install.sh --yes --name "Dee Firmin" --team "Data Engineering" --repo dfirmin/archivist-knowledge-01
+./install.sh --yes --only voice,models,app,launcher     # just some steps
+./install.sh --dry-run                                  # show what it would do
+```
+
+`./install.sh --help` lists every option and step. One more thing to do yourself: **protect the
+knowledge repo's `main`** (require a pull request before merging). Bookwyrm's rules say it only
+works through PRs; branch protection is what makes that true.
+
+**Using Bookwyrm.** Open Bookwyrm and click the dragon to call it. Or talk to it in text:
+`hermes -p bookwyrm chat`. At startup Hermes may print `Warning: Unknown toolsets: mcp-github`;
+that is a start-up ordering message and the tools are there once the server connects
+(`hermes -p bookwyrm mcp test github` is the real check, and setup runs it for you).
+
+**Choosing a model:** edit `model:` in `~/.hermes/profiles/bookwyrm/config.yaml`. Direct Anthropic
+is the default; a LiteLLM block is there commented out. Setup refreshes that file from
+`profile/config.yaml` on every run, so make lasting changes there.
 
 ## Layout
 
@@ -117,8 +117,8 @@ skills/                  Bookwyrm's skills (loaded read-only via skills.external
 voice/                   The call service: Pipecat pipeline, Hermes adapter, local speech models
 voice/prompts/           How Bookwyrm talks on a call
 app/                     The desktop companion (Electron): the dragon, the ring, the call card
-scripts/install.sh       Creates or refreshes the bookwyrm profile
-scripts/setup-voice.sh   Sets up the call service and the companion app
+install.sh, install.ps1  One-line installers: get Node.js and the source, start the wizard
+setup/                   The setup wizard (Ink): every install step, safe to re-run
 docs/adr/                Decisions
 docs/live-proof/         What was run and what it showed
 ```

@@ -1,6 +1,6 @@
 # Bookwyrm — Hermes profile config.
-# install.sh copies this to ~/.hermes/profiles/bookwyrm/config.yaml and fills in the path
-# to this repo's skills/. Secrets go in that profile's .env, never here.
+# Bookwyrm setup (install.sh → setup/) copies this to ~/.hermes/profiles/bookwyrm/config.yaml and fills
+# in the path to this repo's skills/. Secrets go in that profile's .env, never here.
 # Decisions behind this file: docs/adr/0001-hermes-runtime-github-tools-sqlite-memory.md
 
 # Schema version of Hermes' config this file was written against (hermes-agent bb23628, Oct 2026).

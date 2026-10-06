@@ -49,7 +49,11 @@ test('linux: uses build/icon.png when present', () => {
   assert.ok(text.includes(`Icon=${path.join(appDir, 'build', 'icon.png')}`));
 });
 
-test('macOS: wrapper bundle with Info.plist, executable script, icon, login agent', () => {
+// The macOS bundle is simulated with POSIX paths and file modes, which a Windows host doesn't
+// have; these run on the macOS and Linux CI runners.
+const POSIX_ONLY = { skip: process.platform === 'win32' && 'needs POSIX paths and file modes' };
+
+test('macOS: wrapper bundle with Info.plist, executable script, icon, login agent', POSIX_ONLY, () => {
   const { home, appDir } = tempHome();
   fs.writeFileSync(path.join(appDir, 'build', 'icon.icns'), 'icns');
   const opts = { platform: 'darwin', home };
@@ -96,7 +100,7 @@ test('macOS: re-running replaces the bundle cleanly (icon removed later)', () =>
   assert.ok(!fs.readFileSync(path.join(app, 'Contents', 'Info.plist'), 'utf8').includes('CFBundleIconFile'));
 });
 
-test('macOS: shell quoting survives an apostrophe in the path', () => {
+test('macOS: shell quoting survives an apostrophe in the path', POSIX_ONLY, () => {
   const { home } = tempHome();
   const appDir = path.join(home, "Dee's stuff", 'app');
   fs.mkdirSync(appDir, { recursive: true });

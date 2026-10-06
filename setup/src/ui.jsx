@@ -102,7 +102,9 @@ function Welcome({ ctx, onNext }) {
         ))}
       </Box>
       {allDone ? <Hint>Everything is already set up. Running again checks it and picks up any changes.</Hint> : null}
-      <Hint>Press Enter to start · Esc to leave</Hint>
+      <Box marginTop={1} borderStyle="round" borderColor={ACCENT} paddingX={1}>
+        <Text><Text bold color={ACCENT}>Press Enter to start</Text><Text dimColor>  ·  nothing is installed until you do  ·  Esc to leave</Text></Text>
+      </Box>
     </Box>
   );
 }
@@ -457,7 +459,16 @@ function Bar({ done, total, bytes }) {
   );
 }
 
-function StepRow({ step, s, width }) {
+export function fmtDuration(ms) {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s`;
+}
+
+// A step that prints nothing for this long gets a "still working" line: downloads and package
+// installs are often silent for minutes, and a bare spinner looks stuck.
+export const QUIET_MS = 30_000;
+
+function StepRow({ step, s, width, now }) {
   const icon = {
     pending: <Text dimColor>·</Text>,
     running: <Text color={ACCENT}><Spinner type="dots" /></Text>,
@@ -478,9 +489,12 @@ function StepRow({ step, s, width }) {
   return (
     <Box flexDirection="column">
       <Text>
-        {icon} <Text dimColor={s.status === 'skipped' || s.status === 'pending'}>{step.title}</Text>
+        {icon} <Text dimColor={s.status === 'skipped' || s.status === 'pending'} bold={s.status === 'running'}>{step.title}</Text>
+        {s.status === 'running' && s.startedAt ? <Text color={ACCENT}>  {fmtDuration(now - s.startedAt)}</Text> : null}
         {note && s.status !== 'warn' ? <Text dimColor>  {trim(note, step.title.length + 8)}</Text> : null}
+        {s.status === 'done' && s.tookMs >= 10_000 ? <Text dimColor>  ({fmtDuration(s.tookMs)})</Text> : null}
       </Text>
+      {s.status === 'running' && s.doing ? <Text>    {trim(s.doing)}</Text> : null}
       {s.status === 'failed' && s.error ? <Text color="red">    {trim(s.error.message)}</Text> : null}
       {s.status === 'warn' && <Text color="yellow">    {s.note}</Text>}
       {s.status === 'plan' && s.plan.map((l) => <Text key={l} dimColor>    {l}</Text>)}
@@ -488,8 +502,19 @@ function StepRow({ step, s, width }) {
         <Text>    <Text dimColor>{s.progress.label} </Text><Bar {...s.progress} /></Text>
       )}
       {s.status === 'running' && !s.progress && s.line ? <Text dimColor>    {trim(s.line)}</Text> : null}
+      {s.status === 'running' && s.lastAt && now - s.lastAt >= QUIET_MS ? (
+        <Text color="yellow">    Still working. Nothing new for {fmtDuration(now - s.lastAt)}; big downloads are often quiet.</Text>
+      ) : null}
     </Box>
   );
+}
+
+/** "Step 7 of 11 · 4m 12s so far". Steps already done are passed in a moment, so this counts the list. */
+function Overall({ rows, now, started }) {
+  const ids = STEPS.map((st) => st.id).filter((id) => rows[id].note !== 'not selected');
+  const at = ids.findIndex((id) => rows[id].status === 'running');
+  if (at < 0) return null;
+  return <Text dimColor>Step {at + 1} of {ids.length} · {fmtDuration(now - started)} so far</Text>;
 }
 
 function Install({ ctx, onNext }) {
@@ -497,7 +522,14 @@ function Install({ ctx, onNext }) {
   const rowsRef = useRef(Object.fromEntries(STEPS.map((st) => [st.id, { status: 'pending' }])));
   const [rows, setRows] = useState(rowsRef.current);
   const [failure, setFailure] = useState(null);
+  const [now, setNow] = useState(Date.now());
+  const started = useRef(Date.now());
   const width = Math.max(40, Math.min(process.stdout.columns || 80, 110));
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -517,8 +549,9 @@ function Install({ ctx, onNext }) {
   return (
     <Box flexDirection="column">
       <Text>{ctx.opts.dryRun ? 'Here\'s what setup would do. Nothing will be changed.' : 'Setting things up. This is the part you can leave running.'}</Text>
+      {!ctx.opts.dryRun ? <Overall rows={rows} now={now} started={started.current} /> : null}
       <Box marginTop={1} flexDirection="column">
-        {STEPS.map((step) => <StepRow key={step.id} step={step} s={rows[step.id]} width={width} />)}
+        {STEPS.map((step) => <StepRow key={step.id} step={step} s={rows[step.id]} width={width} now={now} />)}
       </Box>
       {failure && (
         <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor="red" paddingX={1}>

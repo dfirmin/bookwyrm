@@ -1,0 +1,23 @@
+[project]
+name = "bookwyrm-voice"
+version = "0.1.0"
+description = "Phone-call-style voice front end for the Bookwyrm Hermes profile"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "pipecat-ai[silero,webrtc]==1.12.0",   # transport, Silero VAD, smart-turn v3 (bundled ONNX)
+  "sherpa-onnx==1.13.8",                  # Parakeet speech-to-text, Kokoro text-to-speech
+  "sherpa-onnx-core==1.13.8",
+  "fastapi>=0.140,<1",
+  "uvicorn>=0.50,<1",
+  "httpx>=0.28,<1",
+]
+
+[project.scripts]
+bookwyrm-voice = "bookwyrm_voice.server:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["bookwyrm_voice"]

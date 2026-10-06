@@ -1,0 +1,177 @@
+@import "@fontsource/literata/400.css";
+@import "@fontsource/literata/400-italic.css";
+@import "@fontsource/literata/600.css";
+@import "@fontsource/instrument-sans/400.css";
+@import "@fontsource/instrument-sans/600.css";
+
+:root {
+  --bookcloth: #2f5245;
+  --bookcloth-deep: #22392f;
+  --scale: #3e6a58;
+  --celadon: #e6eee8;
+  --belly: #cfe0d5;
+  --ink: #16201c;
+  --ink-soft: #4d5c55;
+  --rule: #b9cbbf;
+  --gilt: #b98a3c;
+  --stamp: #b0473b;
+  --level: 0;            /* live speech level, 0..1, set from JS */
+  --serif: "Literata", Georgia, serif;
+  --sans: "Instrument Sans", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; user-select: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.stage { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: flex-end; gap: 6px; padding: 6px; }
+
+/* ---------------------------------------------------------------- the call card */
+
+.card {
+  display: none;
+  width: 300px;
+  max-height: 100%;          /* hugs its content: a ringing call is small, a conversation grows */
+  flex-direction: column;
+  background: var(--celadon);
+  border-radius: 14px 14px 4px 14px;
+  box-shadow: 0 1px 0 var(--bookcloth-deep), 0 10px 30px rgb(22 32 28 / 0.28);
+  border-left: 10px solid var(--bookcloth);   /* the bound spine of a checkout card */
+  overflow: hidden;
+}
+body[data-shape="open"] .card { display: flex; }
+
+.card-head { position: relative; padding: 16px 18px 10px; }
+.card-head h1 { margin: 0; font: 600 21px/1.2 var(--serif); letter-spacing: 0.01em; color: var(--bookcloth-deep); }
+.status { margin: 3px 0 0; font-size: 13px; line-height: 1.4; color: var(--ink-soft); }
+
+/* the stamped start time: a rubber stamp, slightly askew */
+.stamp {
+  position: absolute; right: 14px; top: 16px;
+  padding: 3px 8px;
+  font: 600 12px/1.3 var(--sans);
+  color: var(--stamp);
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+  transform: rotate(-4deg);
+  opacity: 0.85;
+}
+
+.reason { margin: 0 18px 12px; font: italic 14px/1.45 var(--serif); color: var(--bookcloth-deep); }
+
+/* ruled lines, with the conversation written onto them */
+.lines {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0 18px 12px;
+  list-style: none;
+  overflow-y: auto;
+  user-select: text;
+  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 25px, var(--rule) 25px, var(--rule) 26px);
+  background-attachment: local;
+  scroll-behavior: smooth;
+}
+.lines:empty { display: none; }
+.lines li { margin: 0; font: 400 15px/26px var(--serif); }
+.lines li .who { font: 600 12px/0 var(--sans); color: var(--ink-soft); margin-right: 6px; }  /* line-height 0: labels must not stretch the ruled rows */
+.lines li.bot .who { color: var(--bookcloth); }
+.lines li.you { color: var(--ink-soft); }
+.lines li.note { font: italic 14px/26px var(--serif); color: var(--ink-soft); }
+.lines .said.live { opacity: 0.5; }
+
+.type { padding: 0 14px 10px; }
+.type input {
+  width: 100%; padding: 9px 12px;
+  font: 15px/1.3 var(--serif); color: var(--ink);
+  background: #fff; border: 1px solid var(--rule); border-radius: 8px;
+}
+.type input:focus-visible { outline: 2px solid var(--bookcloth); outline-offset: 1px; }
+
+.controls { display: flex; gap: 8px; justify-content: flex-end; align-items: center; padding: 10px 14px 14px; border-top: 1px solid var(--rule); }
+.controls button {
+  font: 600 14px/1 var(--sans);
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.controls button:focus-visible { outline: 2px solid var(--bookcloth); outline-offset: 2px; }
+.controls .quiet { background: transparent; color: var(--bookcloth-deep); border-color: var(--rule); }
+.controls .quiet[aria-pressed="true"] { background: var(--bookcloth); color: var(--celadon); border-color: var(--bookcloth); }
+.controls .answer { background: var(--gilt); color: #fff; }
+.controls .hangup { background: var(--stamp); color: #fff; }
+.controls button:hover { filter: brightness(1.06); }
+
+/* ---------------------------------------------------------------- the dragon */
+
+.dragon {
+  position: relative;
+  flex: none;
+  width: 138px; height: 164px;
+  padding: 0; border: 0; background: none; cursor: pointer;
+  border-radius: 50%;
+}
+.dragon:focus-visible { outline: 2px solid var(--gilt); outline-offset: -6px; }
+.dragon svg { width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 6px 10px rgb(22 32 28 / 0.25)); }
+
+.dragon .body, .dragon .skin { fill: var(--scale); }
+.dragon .wing { fill: var(--bookcloth); }
+.dragon .tail { fill: none; stroke: var(--scale); stroke-width: 9; stroke-linecap: round; }
+.dragon .belly { fill: var(--belly); }
+.dragon .belly-line { fill: none; stroke: #b4cbbd; stroke-width: 1.4; stroke-linecap: round; }
+.dragon .horn { fill: var(--gilt); }
+.dragon .fin { fill: var(--bookcloth); }
+.dragon .cheek { fill: var(--gilt); opacity: 0.35; }
+.dragon .eyes circle { fill: var(--ink); }
+.dragon .eyes .glint { fill: #fff; }
+.dragon .specs { fill: none; stroke: var(--gilt); stroke-width: 2; }
+.dragon .specs circle { fill: rgb(255 255 255 / 0.14); }
+.dragon .nostril { fill: var(--bookcloth-deep); }
+.dragon .mouth { fill: var(--bookcloth-deep); transform-box: fill-box; transform-origin: center; transform: scaleY(0.25); }
+.dragon .cover { fill: var(--bookcloth-deep); }
+.dragon .page { fill: #f7faf8; stroke: #c6d6cc; stroke-width: 1; }
+.dragon .page-lines { fill: none; stroke: #cfdcd4; stroke-width: 1.2; }
+.dragon .ring-lines { fill: none; stroke: var(--gilt); stroke-width: 3; stroke-linecap: round; opacity: 0; }
+
+.dragon .breath, .dragon .head, .dragon .eyes, .dragon .whole, .dragon .fin, .dragon .page.right { transform-box: fill-box; transform-origin: center bottom; }
+.dragon .eyes { transform-origin: center; }
+
+.badge {
+  position: absolute; top: 18px; right: 18px;
+  min-width: 20px; height: 20px; padding: 0 6px;
+  font: 600 12px/20px var(--sans); color: #fff;
+  background: var(--stamp); border-radius: 10px;
+}
+
+/* idle: a slow breath and the occasional blink */
+body[data-state="idle"] .dragon .breath { animation: breathe 4.8s ease-in-out infinite; }
+body .dragon .eyes { animation: blink 6s infinite; }
+
+/* ringing: the whole dragon rattles and the bell lines sound */
+body[data-state="ringing"] .dragon .whole { animation: rattle 0.5s ease-in-out infinite; transform-origin: center bottom; }
+body[data-state="ringing"] .dragon .ring-lines { animation: ring 1s ease-out infinite; }
+
+/* listening: fins up, head tipped toward you */
+body[data-state="listening"] .dragon .fin { transform: rotate(-14deg) translateY(-2px); transition: transform 0.25s; }
+body[data-state="listening"] .dragon .head { transform: rotate(-4deg); transition: transform 0.3s; }
+
+/* speaking: the mouth follows its own voice */
+body[data-state="speaking"] .dragon .mouth { transform: scaleY(calc(0.3 + var(--level) * 1.6)); }
+body[data-state="speaking"] .dragon .breath { transform: scale(calc(1 + var(--level) * 0.025)); }
+
+/* thinking: eyes up to the page, which turns */
+body[data-state="thinking"] .dragon .eyes { transform: translate(2px, -2.5px); animation: none; }
+body[data-state="thinking"] .dragon .page.right { animation: turn 1.6s ease-in-out infinite; }
+
+@keyframes breathe { 50% { transform: scale(1.025); } }
+@keyframes blink { 0%, 95%, 100% { transform: scaleY(1); } 97% { transform: scaleY(0.1); } }
+@keyframes rattle { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-3.5deg); } 75% { transform: rotate(3.5deg); } }
+@keyframes ring { 0% { opacity: 0; } 30% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes turn { 50% { transform: scaleX(0.85) skewY(-3deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .dragon * { animation: none !important; transition: none !important; }
+  body[data-state="ringing"] .dragon .ring-lines { opacity: 1; }
+}

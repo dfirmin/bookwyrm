@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src http://127.0.0.1:* http://localhost:*; media-src 'self' blob: mediastream:; style-src 'self'; font-src 'self'; img-src 'self' data:" />
+  <title>Bookwyrm</title>
+  <link rel="stylesheet" href="../dist/app.css" />
+</head>
+<body data-state="idle" data-shape="docked">
+  <main class="stage">
+    <section class="card" aria-live="polite" aria-label="Call with Bookwyrm">
+      <header class="card-head">
+        <h1>Bookwyrm</h1>
+        <p class="status" id="status">Ready when you are</p>
+        <time class="stamp" id="stamp" hidden></time>
+      </header>
+
+      <p class="reason" id="reason" hidden></p>
+
+      <ol class="lines" id="lines"></ol>
+
+      <form class="type" id="type-form" hidden>
+        <label class="sr-only" for="type-input">Type to Bookwyrm</label>
+        <input id="type-input" autocomplete="off" placeholder="Type to Bookwyrm" />
+      </form>
+
+      <footer class="controls">
+        <button type="button" id="answer" class="answer" hidden>Answer</button>
+        <button type="button" id="decline" class="quiet" hidden>Not now</button>
+        <button type="button" id="mute" class="quiet" aria-pressed="false" hidden>Mute</button>
+        <button type="button" id="type" class="quiet" hidden>Type</button>
+        <button type="button" id="hangup" class="hangup" hidden>Hang up</button>
+      </footer>
+    </section>
+
+    <button class="dragon" id="dragon" type="button" aria-label="Call Bookwyrm">
+      <svg viewBox="0 0 160 176" aria-hidden="true">
+        <g class="ring-lines">
+          <path d="M28 46 q-8 10 0 20" /><path d="M20 40 q-13 16 0 32" />
+          <path d="M132 46 q8 10 0 20" /><path d="M140 40 q13 16 0 32" />
+        </g>
+        <g class="whole">
+          <!-- tail curling round the book -->
+          <path class="tail" d="M112 128 C142 124 148 100 132 92 C124 88 120 98 128 100" />
+          <!-- wings -->
+          <path class="wing" d="M48 92 C30 78 24 96 34 104 C38 100 42 102 46 106 Z" />
+          <path class="wing" d="M112 92 C130 78 136 96 126 104 C122 100 118 102 114 106 Z" />
+          <!-- body and belly -->
+          <g class="breath">
+            <ellipse class="body" cx="80" cy="104" rx="36" ry="32" />
+            <ellipse class="belly" cx="80" cy="112" rx="21" ry="19" />
+            <path class="belly-line" d="M66 106 q14 5 28 0 M68 116 q12 4 24 0" />
+            <!-- head -->
+            <g class="head">
+              <path class="horn" d="M62 44 C56 30 60 24 66 26 C64 32 66 38 68 42 Z" />
+              <path class="horn" d="M98 44 C104 30 100 24 94 26 C96 32 94 38 92 42 Z" />
+              <path class="fin" d="M52 58 L40 52 L50 66 Z" />
+              <path class="fin" d="M108 58 L120 52 L110 66 Z" />
+              <circle class="skin" cx="80" cy="62" r="28" />
+              <ellipse class="cheek" cx="62" cy="72" rx="5" ry="3" />
+              <ellipse class="cheek" cx="98" cy="72" rx="5" ry="3" />
+              <g class="eyes">
+                <circle cx="70" cy="60" r="4.6" /><circle cx="90" cy="60" r="4.6" />
+                <circle class="glint" cx="71.6" cy="58.4" r="1.4" /><circle class="glint" cx="91.6" cy="58.4" r="1.4" />
+              </g>
+              <g class="specs">
+                <circle cx="70" cy="60" r="8.5" /><circle cx="90" cy="60" r="8.5" />
+                <path d="M78.5 60 q1.5 -2 3 0" />
+              </g>
+              <circle class="nostril" cx="76" cy="71" r="1" /><circle class="nostril" cx="84" cy="71" r="1" />
+              <ellipse class="mouth" cx="80" cy="78" rx="5" ry="3" />
+            </g>
+          </g>
+          <!-- the open book it sits on -->
+          <g class="book">
+            <path class="cover" d="M18 140 L80 150 L142 140 L142 150 L80 162 L18 150 Z" />
+            <path class="page left" d="M24 132 C44 126 64 130 80 140 L80 152 C64 142 44 138 24 144 Z" />
+            <path class="page right" d="M136 132 C116 126 96 130 80 140 L80 152 C96 142 116 138 136 144 Z" />
+            <path class="page-lines" d="M32 136 q20 -4 40 4 M32 141 q20 -4 40 4 M88 140 q20 -8 40 -4 M88 145 q20 -8 40 -4" />
+          </g>
+        </g>
+      </svg>
+      <span class="badge" id="badge" hidden>1</span>
+    </button>
+  </main>
+  <audio id="remote" autoplay></audio>
+  <script src="../dist/app.js"></script>
+</body>
+</html>

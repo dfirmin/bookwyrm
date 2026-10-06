@@ -1,0 +1,21 @@
+{
+  "name": "bookwyrm-companion",
+  "version": "0.1.0",
+  "description": "Bookwyrm desktop companion: call your knowledge librarian",
+  "main": "main.js",
+  "scripts": {
+    "build": "esbuild renderer/app.js --bundle --outdir=dist --format=iife --loader:.woff2=file --loader:.woff=file --minify",
+    "start": "npm run build && electron ."
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@fontsource/instrument-sans": "^5.3.0",
+    "@fontsource/literata": "^5.3.0"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "esbuild": "^0.28.2"
+  },
+  "private": true
+}

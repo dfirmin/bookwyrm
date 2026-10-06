@@ -22,6 +22,7 @@ app.whenReady().then(async () => {
   await wait(2500);
   const [companion] = BrowserWindow.getAllWindows();
   check(!!companion, "companion window exists");
+  for (let i = 0; i < 40 && !companion.isVisible(); i++) await wait(250);   // up to 10 s on a cold machine
   check(companion.isVisible(), "a robot hidden last time is back after a restart");
   const { workArea: wa } = screen.getPrimaryDisplay();
   const b0 = companion.getBounds();

@@ -50,6 +50,8 @@ state.hidden = false;
 // Shows or hides the robot from anywhere. Ctrl+Option+B on a Mac, Ctrl+Alt+B elsewhere.
 const ROBOT_SHORTCUT = "Control+Alt+B";
 const SHORTCUT_LABEL = IS_MAC ? "⌃⌥B" : "Ctrl+Alt+B";
+// Shown next to the menu items on macOS and Windows; GTK menus on Linux don't take it.
+const SHORTCUT_HINT = process.platform === "linux" ? {} : { accelerator: ROBOT_SHORTCUT, registerAccelerator: false };
 
 // ---- small helpers ----------------------------------------------------------------------------
 
@@ -242,7 +244,7 @@ ipcMain.on("menu:robot", async (_e, s) => {
       { label: "Library", click: () => openBookwyrmWindow({ view: "library" }) },
       await callsYouItem(),
       { type: "separator" },
-      { label: "Hide robot", accelerator: ROBOT_SHORTCUT, registerAccelerator: false, click: () => setCompanionVisible(false) },
+      { label: "Hide robot", ...SHORTCUT_HINT, click: () => setCompanionVisible(false) },
       QUIT,
     ];
   }
@@ -269,7 +271,7 @@ async function refreshTray() {
     { label: "Send a message", enabled: !onCall, click: () => act("message") },
     { label: "Open Bookwyrm", click: () => openBookwyrmWindow() },
     { type: "separator" },
-    { label: "Show robot", type: "checkbox", checked: visible, accelerator: ROBOT_SHORTCUT, registerAccelerator: false, click: (i) => setCompanionVisible(i.checked) },
+    { label: "Show robot", type: "checkbox", checked: visible, ...SHORTCUT_HINT, click: (i) => setCompanionVisible(i.checked) },
     await callsYouItem(),
     { label: "Settings…", click: () => openBookwyrmWindow({ view: "settings" }) },
     { type: "separator" },

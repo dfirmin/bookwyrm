@@ -51,13 +51,14 @@ def transcribe(recognizer: sherpa_onnx.OfflineRecognizer, pcm16: bytes) -> str:
 class ParakeetSTTService(SegmentedSTTService):
     """One transcription per utterance; Parakeet adds punctuation and capitalisation itself."""
 
-    def __init__(self, *, model_dir: Path, threads: int = 2, **kwargs):
+    def __init__(self, *, recognizer: sherpa_onnx.OfflineRecognizer, **kwargs):
+        """``recognizer`` is loaded once per process (see pipeline.Engines) and shared by calls."""
         super().__init__(
             sample_rate=SAMPLE_RATE,
             settings=STTSettings(model="parakeet-tdt-0.6b-v2", language=Language.EN),
             **kwargs,
         )
-        self._recognizer = load_recognizer(model_dir, threads)
+        self._recognizer = recognizer
 
     @property
     def wants_wav_segments(self) -> bool:

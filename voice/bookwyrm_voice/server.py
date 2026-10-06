@@ -39,19 +39,31 @@ from .pipeline import Engines, build_call, greet
 from .watch import Reason, Watcher, load_prefs, save_prefs
 
 settings = load_settings()
-state: dict = {"engines": None, "watcher": None}
+state: dict = {"engines": None, "watcher": None, "loading": True, "error": None}
 webrtc = SmallWebRTCRequestHandler()
+
+
+async def _load_engines():
+    logger.info("Loading speech models (first run downloads ~1 GB from GitHub)…")
+    try:
+        state["engines"] = await asyncio.to_thread(Engines, settings)
+        logger.info(f"Ready. Hermes at {settings.hermes_url}; voice {settings.voice}")
+    except Exception as e:
+        state["error"] = f"{type(e).__name__}: {e}"
+        logger.exception("Could not load the speech models")
+    finally:
+        state["loading"] = False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Loading speech models (first run downloads ~1 GB from GitHub)…")
-    state["engines"] = await asyncio.to_thread(Engines, settings)
-    logger.info(f"Ready. Hermes at {settings.hermes_url}; voice {settings.voice}")
+    # Answer /health straight away; the models load in the background and /health says so.
+    loader = asyncio.create_task(_load_engines())
     w = Watcher(settings.watch_repo, settings.watch_token, settings.watch_minutes)
     w.start()
     state["watcher"] = w
     yield
+    loader.cancel()
     await w.stop()
     await webrtc.close()
 
@@ -84,6 +96,9 @@ async def _run_call(connection, reason: Reason | None):
 
 @app.post("/api/offer")
 async def offer(request: Request, background: BackgroundTasks):
+    if state["engines"] is None:
+        from fastapi import HTTPException
+        raise HTTPException(503, state["error"] or "Bookwyrm is still loading its voice.")
     body = await request.json()
     req = SmallWebRTCRequest.from_dict(body)
     data = req.request_data or {}
@@ -194,7 +209,8 @@ async def health():
     except Exception:
         pass
     return {"ok": hermes and state["engines"] is not None, "hermes": hermes,
-            "models": state["engines"] is not None, "voice": settings.voice}
+            "models": state["engines"] is not None, "loading": state["loading"],
+            "error": state["error"], "voice": settings.voice}
 
 
 def main():

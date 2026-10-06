@@ -93,11 +93,28 @@ function stopRing() { clearInterval(ringTimer); ringTimer = null; }
 
 // ---------------------------------------------------------------- health
 
+const WAKING = "Bookwyrm is still waking up. Try again in a moment.";
+
+// While the voice service is starting or loading its models, keep ringing rather than failing.
+async function readyOrReason(maxWaitMs = 60000) {
+  const until = Date.now() + maxWaitMs;
+  for (;;) {
+    const problem = await preflight();
+    if (problem !== WAKING || Date.now() > until) return problem;
+    status("Calling Bookwyrm… (waking up)");
+    await new Promise((r) => setTimeout(r, 1500));
+    if (phase !== "ringing" && phase !== "connecting") return "cancelled";
+  }
+}
+
 async function preflight() {
   const h = await window.bookwyrm.health();
-  if (!h) return "Can't reach Bookwyrm's voice service on this Mac. It starts with the app once setup is done.";
-  if (!h.hermes) return "Bookwyrm's brain isn't running. Open the Hermes app, or run: hermes gateway";
-  if (!h.models) return "Bookwyrm is still loading its voice. Try again in a minute.";
+  if (h?.down === "not-set-up") return "Bookwyrm's voice isn't set up on this Mac yet. Run scripts/setup-voice.sh, then restart the app.";
+  if (h?.down === "starting" || h?.loading) return WAKING;
+  if (h?.down === "stopped") return `Bookwyrm's voice service stopped. The end of its log (${h.log}):\n${h.detail || "(empty)"}`;
+  if (h?.error) return `Bookwyrm couldn't load its voice: ${h.error}`;
+  if (!h) return "Can't reach Bookwyrm's voice service.";
+  if (!h.hermes) return "Bookwyrm's brain isn't running. Run: hermes gateway restart";
   return null;
 }
 
@@ -164,7 +181,8 @@ async function placeCall(reason = null) {
   controls(ui.hangup);
   if (!reason) startRing();
 
-  const problem = await preflight();
+  const problem = await readyOrReason();
+  if (problem === "cancelled") return;
   if (problem) { stopRing(); fail(problem); return; }
   fetch(`${voiceUrl}/api/warmup`, { method: "POST" }).catch(() => {});
 

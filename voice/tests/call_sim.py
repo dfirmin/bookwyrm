@@ -160,7 +160,7 @@ class Caller:
     """Synthesizes the caller's lines (a different Kokoro voice) and speaks them into the call."""
 
     def __init__(self, engines: Engines, tape: Tape, mic: SimInput, voice: str = "am_michael"):
-        self._tts = load_kokoro(engines.tts_dir, threads=2)
+        self._tts = load_kokoro(engines.tts_dir, threads=2)   # its own copy: a different voice
         self._sid = voice_ids(engines.tts_dir)[voice]
         self._tape, self._mic = tape, mic
 

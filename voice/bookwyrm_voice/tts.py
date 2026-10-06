@@ -7,6 +7,7 @@ sentence, so Bookwyrm starts talking while the rest of the answer is still being
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -43,21 +44,32 @@ def load_kokoro(model_dir: Path, threads: int = 4) -> sherpa_onnx.OfflineTts:
     )
 
 
-class KokoroSherpaTTSService(TTSService):
-    def __init__(self, *, model_dir: Path, voice: str = "af_heart", speed: float = 1.0, threads: int = 4,
-                 spoken_log=None, **kwargs):
-        super().__init__(
-            push_start_frame=True,
-            push_stop_frames=True,
-            settings=TTSSettings(model="kokoro-82m-v1.0", voice=voice, language="en-us"),
-            **kwargs,
-        )
+class Kokoro:
+    """The loaded Kokoro model, shared by every call in the process (loading takes seconds)."""
+
+    def __init__(self, model_dir: Path, voice: str = "af_heart", threads: int = 4):
         ids = voice_ids(model_dir)
         if voice not in ids:
             raise ValueError(f"Kokoro has no voice {voice!r}; choose one of: {', '.join(sorted(ids))}")
-        self._sid = ids[voice]
+        self.voice, self.sid = voice, ids[voice]
+        self.engine = load_kokoro(model_dir, threads)
+        self._lock = threading.Lock()
+
+    def generate(self, text: str, speed: float):
+        with self._lock:
+            return self.engine.generate(text, sid=self.sid, speed=speed)
+
+
+class KokoroSherpaTTSService(TTSService):
+    def __init__(self, *, kokoro: Kokoro, speed: float = 1.0, spoken_log=None, **kwargs):
+        super().__init__(
+            push_start_frame=True,
+            push_stop_frames=True,
+            settings=TTSSettings(model="kokoro-82m-v1.0", voice=kokoro.voice, language="en-us"),
+            **kwargs,
+        )
+        self._kokoro = kokoro
         self._speed = speed
-        self._tts = load_kokoro(model_dir, threads)
         self._resampler = create_stream_resampler()
         self._spoken_log = spoken_log
 
@@ -72,7 +84,7 @@ class KokoroSherpaTTSService(TTSService):
             self._spoken_log.add(text)
         try:
             await self.start_tts_usage_metrics(text)
-            audio = await asyncio.to_thread(self._tts.generate, text, sid=self._sid, speed=self._speed)
+            audio = await asyncio.to_thread(self._kokoro.generate, text, self._speed)
             await self.stop_ttfb_metrics()
             pcm = (np.clip(np.asarray(audio.samples, dtype=np.float32), -1, 1) * 32767).astype(np.int16).tobytes()
             pcm = await self._resampler.resample(pcm, audio.sample_rate, self.sample_rate)

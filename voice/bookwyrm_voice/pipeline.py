@@ -32,8 +32,8 @@ from .config import Settings
 from .echo import EchoGuard, SpokenLog
 from .hermes_llm import HermesRunsLLMService
 from .models import STT_MODEL, TTS_MODEL, ensure_model
-from .stt import ParakeetSTTService
-from .tts import KokoroSherpaTTSService
+from .stt import ParakeetSTTService, load_recognizer
+from .tts import Kokoro, KokoroSherpaTTSService
 
 # Silero's defaults, slightly less eager to start a turn on a cough or a keyboard click.
 VAD = VADParams(confidence=0.7, start_secs=0.25, stop_secs=0.2, min_volume=0.6)
@@ -46,13 +46,15 @@ class Engines:
         self.settings = settings
         self.stt_dir = ensure_model(settings.models_dir, STT_MODEL)
         self.tts_dir = ensure_model(settings.models_dir, TTS_MODEL)
+        self.recognizer = load_recognizer(self.stt_dir)
+        self.kokoro = Kokoro(self.tts_dir, settings.voice)
 
     def stt(self) -> ParakeetSTTService:
-        return ParakeetSTTService(model_dir=self.stt_dir)
+        return ParakeetSTTService(recognizer=self.recognizer)
 
     def tts(self, spoken_log: SpokenLog | None = None) -> KokoroSherpaTTSService:
         return KokoroSherpaTTSService(
-            model_dir=self.tts_dir, voice=self.settings.voice, speed=self.settings.voice_speed,
+            kokoro=self.kokoro, speed=self.settings.voice_speed,
             spoken_log=spoken_log,
             text_filters=[MarkdownTextFilter()],  # belt and braces: the prompt already says no markdown
         )

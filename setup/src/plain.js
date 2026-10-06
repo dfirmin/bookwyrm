@@ -12,6 +12,11 @@ import { addSecret, mask } from './sys.js';
 import { finish, needsAbout, needsKeys, openLaterHint } from './finish.js';
 
 const out = (s = '') => process.stdout.write(`${s}\n`);
+const QUIET_MS = 30_000;
+const fmtDuration = (ms) => {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s`;
+};
 const fmtBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`);
 
 function prompter() {
@@ -86,12 +91,30 @@ export async function runPlain(ctx) {
     const total = STEPS.length;
     const lastPct = {};
     let failed = 0;
+    // A heartbeat while a step is quiet, so a long silent download doesn't look like a hang.
+    let current = null;   // { title, startedAt, lastAt, beatAt }
+    const beat = setInterval(() => {
+      if (!current) return;
+      const now = Date.now();
+      if (now - current.lastAt >= QUIET_MS && now - current.beatAt >= QUIET_MS) {
+        current.beatAt = now;
+        out(`    ... still working on ${current.title} (${fmtDuration(now - current.startedAt)}); nothing new for ${fmtDuration(now - current.lastAt)}`);
+      }
+    }, 5000);
+    beat.unref?.();   // never keeps setup alive on its own
     const result = await runSteps(ctx, {
       update(id, patch) {
         const i = STEPS.findIndex((s) => s.id === id);
         const tag = `[${String(i + 1).padStart(2)}/${total}] ${STEPS[i].title}`;
+        if (patch.lastAt && current) current.lastAt = patch.lastAt;
+        if (patch.status && patch.status !== 'running') current = null;
+        if (patch.status === 'done' && patch.tookMs >= 10_000) patch = { ...patch, note: `${patch.note ? `${patch.note} ` : ''}(${fmtDuration(patch.tookMs)})` };
         switch (patch.status) {
-          case 'running': out(`→ ${tag}`); break;
+          case 'running':
+            current = { title: STEPS[i].title, startedAt: patch.startedAt, lastAt: patch.lastAt, beatAt: patch.startedAt };
+            out(`→ ${tag}`);
+            if (patch.doing) out(`    ${patch.doing}`);
+            break;
           case 'already': out(`✓ ${tag}: ${patch.note || 'already done'}`); break;
           case 'skipped': out(`– ${tag}: skipped`); break;
           case 'done': out(`✓ ${tag}${patch.note ? `: ${patch.note}` : ''}`); break;
@@ -125,6 +148,7 @@ export async function runPlain(ctx) {
         return a.startsWith('r') ? 'retry' : a.startsWith('q') ? 'quit' : 'skip';
       },
     });
+    clearInterval(beat);
     out();
     if (result.quit) {
       out('Setup stopped. Run it again any time; it picks up where it left off.');

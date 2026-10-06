@@ -105,6 +105,7 @@ export function renderProfileFile(text, { skillsDir, repo, mcpBin, isConfig, mod
 export const STEPS = [
   {
     id: 'uv',
+    doing: "Installing uv, the tool that sets up Bookwyrm's Python parts. Usually under a minute.",
     title: 'Python tools (uv)',
     detect(ctx) {
       ctx.uv = findUv();
@@ -129,6 +130,7 @@ export const STEPS = [
 
   {
     id: 'hermes',
+    doing: "Installing Hermes Agent, Bookwyrm's brain. Usually 3 to 8 minutes; it downloads its own Python.",
     title: 'Hermes Agent',
     detect(ctx) {
       ctx.hermes = findHermes();
@@ -156,6 +158,7 @@ export const STEPS = [
 
   {
     id: 'github-mcp',
+    doing: "Downloading the GitHub connector (about 10 MB). A few seconds.",
     title: 'GitHub connector',
     detect(ctx) {
       if (ctx.opts.githubMcpBin) return { done: true, note: `using ${ctx.opts.githubMcpBin}` };
@@ -191,6 +194,7 @@ export const STEPS = [
 
   {
     id: 'profile',
+    doing: "Checking the knowledge repo against Archivist's registry, then writing Bookwyrm's Hermes profile. A few seconds.",
     title: 'Bookwyrm\'s Hermes profile',
     detect: () => ({ done: false }), // cheap and must follow repo changes: always refreshed
     plan(ctx) {
@@ -268,6 +272,7 @@ export const STEPS = [
 
   {
     id: 'api',
+    doing: "Starting Hermes' background service so the app can talk to it. Up to a minute.",
     title: 'Hermes\' local connection for the voice',
     async detectAsync(ctx) {
       const rootEnv = readEnvFile(path.join(paths.hermesHome, '.env'));
@@ -313,6 +318,7 @@ export const STEPS = [
 
   {
     id: 'check',
+    doing: "Connecting to GitHub, then asking Bookwyrm to say \"ready\". About 30 seconds.",
     title: 'Check Bookwyrm can think and reach your repo',
     detect: () => ({ done: false }),
     plan: (ctx) => [
@@ -344,6 +350,7 @@ export const STEPS = [
 
   {
     id: 'voice',
+    doing: "Installing the voice service's Python packages (speech, audio and web parts, several hundred MB). Usually 2 to 5 minutes.",
     title: 'Voice service',
     detect() {
       const stamp = readText(VOICE_STAMP);
@@ -367,6 +374,7 @@ export const STEPS = [
 
   {
     id: 'models',
+    doing: "Downloading the speech models. The bar shows how far along it is.",
     title: 'Speech models (about 1 GB, one time)',
     detect: () => (modelsPresent() ? { done: true, note: 'already downloaded' } : { done: false }),
     plan: () => [`python -m bookwyrm_voice.models --progress   → ${paths.models}`],
@@ -392,6 +400,7 @@ export const STEPS = [
 
   {
     id: 'app',
+    doing: "Installing the app's parts and downloading Electron (about 100 MB). Usually 1 to 3 minutes; this part prints little while it downloads.",
     title: 'Companion app',
     detect: () => ({ done: false }), // the build is quick and must follow repo changes
     plan: () => ['npm ci   (in app/, skipped when unchanged), then fetch Electron', 'npm run build'],
@@ -421,6 +430,7 @@ export const STEPS = [
 
   {
     id: 'launcher',
+    doing: "Adding Bookwyrm to your apps. A second.",
     title: isMac ? 'Bookwyrm in your Applications' : isWin ? 'Bookwyrm in the Start menu' : 'Bookwyrm in your app menu',
     detect: () => ({ done: false }),
     plan: () => [`installLauncher(${paths.app}) → ${loadLauncher().launcherPath()}`],
@@ -437,6 +447,7 @@ export const STEPS = [
 
   {
     id: 'settings',
+    doing: "Saving your settings. A second.",
     title: 'Your settings',
     detect: () => ({ done: false }),
     plan: (ctx) => [`merge ${JSON.stringify(settingsPatch(ctx))} into ${paths.settings}`],

@@ -29,16 +29,20 @@ export async function runSteps(ctx, hooks) {
       continue;
     }
     for (;;) {
-      hooks.update(step.id, { status: 'running', line: '', progress: null, error: null });
+      // startedAt / lastAt let the screens show a clock and say when a step has gone quiet;
+      // `doing` says in plain words what's happening and how long it usually takes.
+      const doing = typeof step.doing === 'function' ? step.doing(ctx) : step.doing;
+      const t0 = Date.now();
+      hooks.update(step.id, { status: 'running', line: '', progress: null, error: null, doing, startedAt: t0, lastAt: t0 });
       const io = {
-        log: (line) => hooks.update(step.id, { line }),
-        progress: (progress) => hooks.update(step.id, { progress }),
+        log: (line) => hooks.update(step.id, { line, lastAt: Date.now() }),
+        progress: (progress) => hooks.update(step.id, { progress, lastAt: Date.now() }),
       };
       try {
         const result = (await step.run(ctx, io)) || {};
         hooks.update(step.id, result.warn
           ? { status: 'warn', note: result.warn, progress: null, line: '' }
-          : { status: 'done', note: result.note && tilde(result.note), progress: null, line: '' });
+          : { status: 'done', note: result.note && tilde(result.note), progress: null, line: '', tookMs: Date.now() - t0 });
         break;
       } catch (err) {
         const error = { message: err.message, hint: err.hint, lines: err.lines || [] };

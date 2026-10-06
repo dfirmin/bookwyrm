@@ -494,7 +494,7 @@ function StepRow({ step, s, width, now }) {
         {note && s.status !== 'warn' ? <Text dimColor>  {trim(note, step.title.length + 8)}</Text> : null}
         {s.status === 'done' && s.tookMs >= 10_000 ? <Text dimColor>  ({fmtDuration(s.tookMs)})</Text> : null}
       </Text>
-      {s.status === 'running' && s.doing ? <Text>    {trim(s.doing)}</Text> : null}
+      {s.status === 'running' && s.doing ? <Box paddingLeft={4}><Text>{s.doing}</Text></Box> : null}
       {s.status === 'failed' && s.error ? <Text color="red">    {trim(s.error.message)}</Text> : null}
       {s.status === 'warn' && <Text color="yellow">    {s.note}</Text>}
       {s.status === 'plan' && s.plan.map((l) => <Text key={l} dimColor>    {l}</Text>)}
@@ -510,8 +510,8 @@ function StepRow({ step, s, width, now }) {
 }
 
 /** "Step 7 of 11 · 4m 12s so far". Steps already done are passed in a moment, so this counts the list. */
-function Overall({ rows, now, started }) {
-  const ids = STEPS.map((st) => st.id).filter((id) => rows[id].note !== 'not selected');
+function Overall({ ctx, rows, now, started }) {
+  const ids = selectedSteps(ctx.opts);
   const at = ids.findIndex((id) => rows[id].status === 'running');
   if (at < 0) return null;
   return <Text dimColor>Step {at + 1} of {ids.length} · {fmtDuration(now - started)} so far</Text>;
@@ -549,7 +549,7 @@ function Install({ ctx, onNext }) {
   return (
     <Box flexDirection="column">
       <Text>{ctx.opts.dryRun ? 'Here\'s what setup would do. Nothing will be changed.' : 'Setting things up. This is the part you can leave running.'}</Text>
-      {!ctx.opts.dryRun ? <Overall rows={rows} now={now} started={started.current} /> : null}
+      {!ctx.opts.dryRun ? <Overall ctx={ctx} rows={rows} now={now} started={started.current} /> : null}
       <Box marginTop={1} flexDirection="column">
         {STEPS.map((step) => <StepRow key={step.id} step={step} s={rows[step.id]} width={width} now={now} />)}
       </Box>

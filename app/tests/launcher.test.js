@@ -15,6 +15,10 @@ function tempHome() {
   return { home, appDir, env: { APPDATA: path.join(home, 'AppData', 'Roaming') } };
 }
 
+// The macOS and Linux launchers are simulated with POSIX paths and file modes, which a Windows
+// host doesn't have; those tests run on the macOS and Linux CI runners.
+const POSIX_ONLY = { skip: process.platform === 'win32' && 'needs POSIX paths and file modes' };
+
 test('electronBinary per platform', () => {
   const dist = path.join('/x/app', 'node_modules', 'electron', 'dist');
   assert.equal(launcher.electronBinary('/x/app', { platform: 'darwin' }), path.join(dist, 'Electron.app/Contents/MacOS/Electron'));
@@ -22,7 +26,7 @@ test('electronBinary per platform', () => {
   assert.equal(launcher.electronBinary('/x/app', { platform: 'win32' }), path.join(dist, 'electron.exe'));
 });
 
-test('linux: desktop entry, quoted Exec, autostart on and off', () => {
+test('linux: desktop entry, quoted Exec, autostart on and off', POSIX_ONLY, () => {
   const { home, appDir } = tempHome();
   const opts = { platform: 'linux', home };
   const file = launcher.installLauncher(appDir, opts);
@@ -42,16 +46,12 @@ test('linux: desktop entry, quoted Exec, autostart on and off', () => {
   launcher.setOpenAtLogin(false, appDir, opts); // idempotent
 });
 
-test('linux: uses build/icon.png when present', () => {
+test('linux: uses build/icon.png when present', POSIX_ONLY, () => {
   const { home, appDir } = tempHome();
   fs.writeFileSync(path.join(appDir, 'build', 'icon.png'), 'png');
   const text = fs.readFileSync(launcher.installLauncher(appDir, { platform: 'linux', home }), 'utf8');
   assert.ok(text.includes(`Icon=${path.join(appDir, 'build', 'icon.png')}`));
 });
-
-// The macOS bundle is simulated with POSIX paths and file modes, which a Windows host doesn't
-// have; these run on the macOS and Linux CI runners.
-const POSIX_ONLY = { skip: process.platform === 'win32' && 'needs POSIX paths and file modes' };
 
 test('macOS: wrapper bundle with Info.plist, executable script, icon, login agent', POSIX_ONLY, () => {
   const { home, appDir } = tempHome();
@@ -88,7 +88,7 @@ test('macOS: wrapper bundle with Info.plist, executable script, icon, login agen
   assert.equal(launcher.isOpenAtLogin(opts), false);
 });
 
-test('macOS: re-running replaces the bundle cleanly (icon removed later)', () => {
+test('macOS: re-running replaces the bundle cleanly (icon removed later)', POSIX_ONLY, () => {
   const { home, appDir } = tempHome();
   const icon = path.join(appDir, 'build', 'icon.icns');
   fs.writeFileSync(icon, 'icns');

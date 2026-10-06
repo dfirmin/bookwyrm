@@ -126,6 +126,9 @@ jobs:
           for f in "$RUNNER_TEMP"/*.log; do
             [ -f "$f" ] || continue
             # Windows PowerShell 5.1 writes UTF-16: dropping the NULs leaves readable ASCII.
-            body=$(tr -d '\000\r' < "$f" | tail -n 40 | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            text=$(tr -d '\000\r' < "$f")
+            # Test output: show the failing tests, not the summary at the end.
+            if printf '%s' "$text" | grep -q '^not ok'; then text=$(printf '%s' "$text" | grep -A 30 '^not ok'); fi
+            body=$(printf '%s\n' "$text" | tail -n 60 | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=$(basename "$f")::${body}"
           done

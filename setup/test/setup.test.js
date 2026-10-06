@@ -9,7 +9,9 @@ import test from 'node:test';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bw-setup-test-'));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+process.env.LOCALAPPDATA = path.join(home, 'AppData', 'Local');
 delete process.env.HERMES_HOME;
+delete process.env.BOOKWYRM_HOME;
 delete process.env.BOOKWYRM_MODELS_DIR;
 
 const sys = await import('../src/sys.js');
@@ -20,7 +22,8 @@ const config = fs.readFileSync(path.join(sys.paths.repo, 'profile', 'config.yaml
 
 test('paths live under the (temp) home', () => {
   assert.equal(sys.paths.bookwyrm, path.join(home, '.bookwyrm'));
-  assert.equal(sys.paths.hermesHome, path.join(home, '.hermes'));
+  // Hermes' own default: %LOCALAPPDATA%\hermes on Windows, ~/.hermes elsewhere.
+  assert.equal(sys.paths.hermesHome, process.platform === 'win32' ? path.join(home, 'AppData', 'Local', 'hermes') : path.join(home, '.hermes'));
   assert.equal(sys.paths.settings, path.join(home, '.bookwyrm', 'settings.json'));
 });
 

@@ -17,5 +17,8 @@
     "electron": "^44.5.1",
     "esbuild": "^0.28.2"
   },
-  "private": true
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  }
 }

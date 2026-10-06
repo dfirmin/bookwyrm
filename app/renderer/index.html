@@ -7,13 +7,17 @@
   <title>Bookwyrm</title>
   <link rel="stylesheet" href="../dist/app.css" />
 </head>
-<body data-state="idle" data-shape="docked">
+<body data-state="idle" data-shape="docked" data-side="left" data-v="up">
   <main class="stage">
-    <section class="card" aria-live="polite" aria-label="Call with Bookwyrm">
+    <section class="card" aria-live="polite" aria-label="Bookwyrm">
       <header class="card-head">
-        <h1>Bookwyrm</h1>
-        <p class="status" id="status">Ready when you are</p>
-        <time class="stamp" id="stamp" hidden></time>
+        <div>
+          <h1 id="title">Bookwyrm</h1>
+          <p class="status" id="status">Ready when you are</p>
+        </div>
+        <button type="button" class="close" id="close" aria-label="Close" title="Close">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" /></svg>
+        </button>
       </header>
 
       <p class="reason" id="reason" hidden></p>
@@ -21,63 +25,62 @@
       <ol class="lines" id="lines"></ol>
 
       <form class="type" id="type-form" hidden>
-        <label class="sr-only" for="type-input">Type to Bookwyrm</label>
-        <input id="type-input" autocomplete="off" placeholder="Type to Bookwyrm" />
+        <label class="sr-only" for="type-input">Message Bookwyrm</label>
+        <input id="type-input" autocomplete="off" placeholder="Message Bookwyrm" />
       </form>
 
       <footer class="controls">
-        <button type="button" id="answer" class="answer" hidden>Answer</button>
-        <button type="button" id="decline" class="quiet" hidden>Not now</button>
-        <button type="button" id="mute" class="quiet" aria-pressed="false" hidden>Mute</button>
-        <button type="button" id="type" class="quiet" hidden>Type</button>
-        <button type="button" id="hangup" class="hangup" hidden>Hang up</button>
+        <div class="left">
+          <button type="button" id="mute" class="round quiet" aria-pressed="false" aria-label="Mute" title="Mute" hidden>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="2.5" width="6" height="10" rx="3" /><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5" /><path class="slash" d="M3 3l14 14" /></svg>
+          </button>
+          <button type="button" id="type" class="round quiet" aria-label="Type a message" title="Type a message" hidden>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="5" width="16" height="10" rx="2" /><path d="M5 8h1M8 8h1M11 8h1M14 8h1M6 12h8" /></svg>
+          </button>
+          <button type="button" id="expand" class="round quiet" aria-label="Open in the Bookwyrm window" title="Open in the Bookwyrm window" hidden>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 3h6v6M17 3l-7 7M9 4H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-4" /></svg>
+          </button>
+        </div>
+        <div class="right">
+          <button type="button" id="decline" class="pill" hidden>Not now</button>
+          <button type="button" id="answer" class="round accept" aria-label="Answer" title="Answer" hidden>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path class="fill" d="M6.6 2.8l1.6 3.4c.2.5.1 1-.3 1.4L6.6 8.8a10 10 0 0 0 4.6 4.6l1.2-1.3c.4-.4.9-.5 1.4-.3l3.4 1.6c.5.2.8.8.7 1.3l-.4 2c-.1.6-.7 1-1.3 1A14.6 14.6 0 0 1 2.3 3.7c0-.6.4-1.2 1-1.3l2-.4c.5-.1 1.1.2 1.3.8z" /></svg>
+          </button>
+          <button type="button" id="hangup" class="round end" aria-label="Hang up" title="Hang up" hidden>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path class="fill" d="M10 7.5c-2.6 0-5 .7-6.9 2-.5.3-.7.9-.5 1.4l.7 1.8c.2.5.8.8 1.3.7l2.6-.6c.5-.1.8-.5.8-1v-1.6a9.4 9.4 0 0 1 4 0v1.6c0 .5.3.9.8 1l2.6.6c.5.1 1.1-.2 1.3-.7l.7-1.8c.2-.5 0-1.1-.5-1.4-1.9-1.3-4.3-2-6.9-2z" /></svg>
+          </button>
+        </div>
       </footer>
     </section>
 
-    <button class="dragon" id="dragon" type="button" aria-label="Call Bookwyrm">
-      <svg viewBox="0 0 160 176" aria-hidden="true">
-        <g class="ring-lines">
-          <path d="M28 46 q-8 10 0 20" /><path d="M20 40 q-13 16 0 32" />
-          <path d="M132 46 q8 10 0 20" /><path d="M140 40 q13 16 0 32" />
-        </g>
-        <g class="whole">
-          <!-- tail curling round the book -->
-          <path class="tail" d="M112 128 C142 124 148 100 132 92 C124 88 120 98 128 100" />
-          <!-- wings -->
-          <path class="wing" d="M48 92 C30 78 24 96 34 104 C38 100 42 102 46 106 Z" />
-          <path class="wing" d="M112 92 C130 78 136 96 126 104 C122 100 118 102 114 106 Z" />
-          <!-- body and belly -->
-          <g class="breath">
-            <ellipse class="body" cx="80" cy="104" rx="36" ry="32" />
-            <ellipse class="belly" cx="80" cy="112" rx="21" ry="19" />
-            <path class="belly-line" d="M66 106 q14 5 28 0 M68 116 q12 4 24 0" />
-            <!-- head -->
-            <g class="head">
-              <path class="horn" d="M62 44 C56 30 60 24 66 26 C64 32 66 38 68 42 Z" />
-              <path class="horn" d="M98 44 C104 30 100 24 94 26 C96 32 94 38 92 42 Z" />
-              <path class="fin" d="M52 58 L40 52 L50 66 Z" />
-              <path class="fin" d="M108 58 L120 52 L110 66 Z" />
-              <circle class="skin" cx="80" cy="62" r="28" />
-              <ellipse class="cheek" cx="62" cy="72" rx="5" ry="3" />
-              <ellipse class="cheek" cx="98" cy="72" rx="5" ry="3" />
-              <g class="eyes">
-                <circle cx="70" cy="60" r="4.6" /><circle cx="90" cy="60" r="4.6" />
-                <circle class="glint" cx="71.6" cy="58.4" r="1.4" /><circle class="glint" cx="91.6" cy="58.4" r="1.4" />
-              </g>
-              <g class="specs">
-                <circle cx="70" cy="60" r="8.5" /><circle cx="90" cy="60" r="8.5" />
-                <path d="M78.5 60 q1.5 -2 3 0" />
-              </g>
-              <circle class="nostril" cx="76" cy="71" r="1" /><circle class="nostril" cx="84" cy="71" r="1" />
-              <ellipse class="mouth" cx="80" cy="78" rx="5" ry="3" />
+    <button class="robot" id="robot" type="button" aria-label="Bookwyrm" aria-haspopup="menu" title="Bookwyrm">
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <defs>
+          <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" class="metal-top" /><stop offset="1" class="metal-bottom" />
+          </linearGradient>
+          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="1.1" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+        <ellipse class="ground" cx="32" cy="60.5" rx="13" ry="2" />
+        <g class="bot">
+          <g class="signal"><path d="M24.5 6.5a10 10 0 0 0 0 9" /><path d="M39.5 6.5a10 10 0 0 1 0 9" /><path d="M21 4a14.5 14.5 0 0 0 0 14" /><path d="M43 4a14.5 14.5 0 0 1 0 14" /></g>
+          <rect class="torso" x="22" y="45" width="20" height="11" rx="5.5" />
+          <circle class="chest" cx="32" cy="50.5" r="1.6" />
+          <path class="antenna" d="M32 13V7.5" />
+          <circle class="lamp" cx="32" cy="6" r="2.6" />
+          <rect class="ear" x="7.5" y="24" width="5" height="12" rx="2.5" />
+          <rect class="ear" x="51.5" y="24" width="5" height="12" rx="2.5" />
+          <rect class="head" x="11" y="12" width="42" height="35" rx="12.5" />
+          <path class="ribbon" d="M41 11h4.6v11.5l-2.3-1.9-2.3 1.9z" />
+          <rect class="screen" x="16" y="18" width="32" height="23" rx="7.5" />
+          <g class="face" filter="url(#glow)">
+            <g class="eyes">
+              <rect class="eye" x="22.5" y="24" width="5.5" height="9" rx="2.75" />
+              <rect class="eye" x="36" y="24" width="5.5" height="9" rx="2.75" />
             </g>
-          </g>
-          <!-- the open book it sits on -->
-          <g class="book">
-            <path class="cover" d="M18 140 L80 150 L142 140 L142 150 L80 162 L18 150 Z" />
-            <path class="page left" d="M24 132 C44 126 64 130 80 140 L80 152 C64 142 44 138 24 144 Z" />
-            <path class="page right" d="M136 132 C116 126 96 130 80 140 L80 152 C96 142 116 138 136 144 Z" />
-            <path class="page-lines" d="M32 136 q20 -4 40 4 M32 141 q20 -4 40 4 M88 140 q20 -8 40 -4 M88 145 q20 -8 40 -4" />
+            <rect class="mouth" x="29" y="35.2" width="6" height="1.6" rx="0.8" />
           </g>
         </g>
       </svg>

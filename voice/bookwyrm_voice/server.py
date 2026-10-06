@@ -157,12 +157,20 @@ async def _run_call(connection, reason: Reason | None, session_id: str | None):
 def _record_call(call, reason: Reason | None, kind: str):
     """What was said, as Pipecat kept it: interrupted answers are cut where the caller cut in."""
     try:
-        h = history()
+        # Pipecat keeps each spoken stretch as its own message; join a speaker's run into one turn.
+        turns: list[list] = []
         for m in call.context.get_messages():
             role = m.get("role") if isinstance(m, dict) else None
-            if role in ("user", "assistant"):
-                h.add(call.llm.session_id, kind, role, context_text(m), via="voice",
-                      reason=reason.headline if reason else None)
+            text = context_text(m).strip() if role in ("user", "assistant") else ""
+            if not text:
+                continue
+            if turns and turns[-1][0] == role:
+                turns[-1][1] += " " + text
+            else:
+                turns.append([role, text])
+        h = history()
+        for role, text in turns:
+            h.add(call.llm.session_id, kind, role, text, via="voice", reason=reason.headline if reason else None)
     except Exception:
         logger.exception("Couldn't save the call to history")
 

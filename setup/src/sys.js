@@ -15,16 +15,19 @@ const HOME = os.homedir();
 // setup/dist/setup.mjs (or setup/src/*.js) → the repo root two levels up.
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+// Bookwyrm's own folder; BOOKWYRM_HOME moves it (the voice service and app honour it too).
+const DATA = process.env.BOOKWYRM_HOME || path.join(HOME, '.bookwyrm');
+
 export const paths = {
   home: HOME,
   repo: REPO,
   app: path.join(REPO, 'app'),
   voice: path.join(REPO, 'voice'),
-  bookwyrm: path.join(HOME, '.bookwyrm'),
-  bin: path.join(HOME, '.bookwyrm', 'bin'),
-  settings: path.join(HOME, '.bookwyrm', 'settings.json'),
-  models: process.env.BOOKWYRM_MODELS_DIR || path.join(HOME, '.bookwyrm', 'models'),
-  mcpBin: path.join(HOME, '.bookwyrm', 'bin', exe('github-mcp-server')),
+  bookwyrm: DATA,
+  bin: path.join(DATA, 'bin'),
+  settings: path.join(DATA, 'settings.json'),
+  models: process.env.BOOKWYRM_MODELS_DIR || path.join(DATA, 'models'),
+  mcpBin: path.join(DATA, 'bin', exe('github-mcp-server')),
   hermesHome: process.env.HERMES_HOME
     || (isWin ? path.join(process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'), 'hermes') : path.join(HOME, '.hermes')),
   venvPython: path.join(REPO, 'voice', '.venv', isWin ? 'Scripts' : 'bin', isWin ? 'python.exe' : 'python'),

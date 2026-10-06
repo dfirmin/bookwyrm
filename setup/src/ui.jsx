@@ -1,4 +1,4 @@
-// The interactive wizard (Ink). Screens: welcome → about you → model → keys → install → done.
+// The interactive wizard (Ink). Screens: welcome → about you → model → keys → knowledge repo → install → done.
 import { Box, Text, useApp, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
@@ -7,9 +7,10 @@ import { runSteps } from './engine.js';
 import { appReady, finish, needsAbout, needsKeys, openLaterHint } from './finish.js';
 import { STEPS } from './steps.js';
 import {
-  ANTHROPIC_KEY_URL, GITHUB_TOKEN_URL, REPO_RE, checkAnthropic, checkGateway, checkGitHub, detectState, existingKeys,
+  ANTHROPIC_KEY_URL, GITHUB_TOKEN_URL, checkAnthropic, checkGateway, checkGitHubToken, detectState, existingKeys,
   normalizeGatewayUrl, selectedSteps,
 } from './state.js';
+import { listTargets, validateTarget } from './registry.js';
 import { addSecret, isMac, isWin, mask } from './sys.js';
 
 const ACCENT = 'cyan';
@@ -111,27 +112,22 @@ function Welcome({ ctx, onNext }) {
 function About({ ctx, onNext }) {
   const a = ctx.answers;
   const [field, setField] = useState(0);
-  const [values, setValues] = useState({ name: a.name || '', team: a.team || '', repo: a.repo || '' });
+  const [values, setValues] = useState({ name: a.name || '', team: a.team || '' });
   const [error, setError] = useState('');
   const fields = [
     { key: 'name', label: 'Your name', placeholder: 'Dee Firmin', help: 'How Bookwyrm greets you, and how it credits what you tell it.' },
     { key: 'team', label: 'Your team', placeholder: 'Data Engineering', help: 'Goes with your name on anything Bookwyrm records from you.' },
-    { key: 'repo', label: 'Your knowledge repo on GitHub', placeholder: 'owner/name', help: 'The Archivist repo Bookwyrm looks after, written as owner/name.' },
   ];
   const f = fields[field];
   const submit = () => {
     const v = values[f.key].trim();
     if (f.key === 'name' && !v) return setError('Please type your name.');
-    if (f.key === 'repo') {
-      const repo = v.replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '').replace(/\/$/, '');
-      if (!REPO_RE.test(repo)) return setError('That should look like owner/name, for example dfirmin/archivist-knowledge-01.');
-      Object.assign(a, { ...values, repo, name: values.name.trim(), team: values.team.trim() });
-      onNext();
-      return undefined;
-    }
+    const next = { ...values, [f.key]: v };
     setError('');
-    setValues({ ...values, [f.key]: v });
-    setField(field + 1);
+    setValues(next);
+    if (field + 1 < fields.length) { setField(field + 1); return undefined; }
+    Object.assign(a, next);
+    onNext();
     return undefined;
   };
   return (
@@ -151,6 +147,82 @@ function About({ ctx, onNext }) {
         error={error}
       />
       <Hint>Enter to continue</Hint>
+    </Box>
+  );
+}
+
+// ---- which knowledge repo: an active target from the Archivist registry -----------------------------------
+
+const ACCESS_NOTE = { none: 'your GitHub token can\'t reach this one', read: 'your token can only read this one' };
+
+function Repo({ ctx, onNext }) {
+  const a = ctx.answers;
+  const token = a.githubToken || existingKeys(ctx.profile).githubToken;
+  const [showTest, setShowTest] = useState(Boolean(ctx.opts.showTest));
+  const [attempt, setAttempt] = useState(0);
+  const [list, setList] = useState(null);       // { targets, hiddenTest, source } or { error }
+  const [checking, setChecking] = useState(null);
+  const [problem, setProblem] = useState('');
+  const [ok, setOk] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    setList(null);
+    listTargets({ registry: a.registry, token, current: a.repo || a.savedRepo, showTest })
+      .then((l) => live && setList(l))
+      .catch((err) => live && setList({ error: err.message }));
+    return () => { live = false; };
+  }, [showTest, attempt]);
+
+  const choose = async (repo) => {
+    setProblem('');
+    setChecking(repo);
+    const v = await validateTarget(repo, { registry: a.registry, token, keepIfUnreachable: repo === a.savedRepo });
+    setChecking(null);
+    if (!v.ok) { setProblem(v.message); return; }
+    a.repo = repo;
+    setOk(v.warn ? `! ${v.warn}` : `✓ ${v.message}`);
+    setTimeout(onNext, 1200);
+  };
+
+  if (!list) return <Text><Text color={ACCENT}><Spinner type="dots" /></Text> Reading the Archivist registry ({a.registry})…</Text>;
+  if (list.error) {
+    const items = [{ label: 'Try again', value: 'retry' }];
+    if (a.savedRepo) items.push({ label: `Keep ${a.savedRepo} for now (it's checked again next time)`, value: 'keep' });
+    return (
+      <Box flexDirection="column">
+        <Text color="yellow">! {list.error}</Text>
+        <Box marginTop={1}>
+          {checking
+            ? <Text><Text color={ACCENT}><Spinner type="dots" /></Text> Checking {checking}…</Text>
+            : ok
+              ? <Text color="yellow">{ok}</Text>
+              : <Select items={items} onSelect={(v) => (v === 'keep' ? choose(a.savedRepo) : setAttempt((n) => n + 1))} />}
+        </Box>
+        {problem ? <Box marginTop={1}><Text color="yellow">! {problem}</Text></Box> : null}
+      </Box>
+    );
+  }
+  const current = a.repo || a.savedRepo;
+  const items = list.targets.map((t) => ({
+    value: t.repo,
+    label: `${t.name}  ${t.repo}${t.type === 'test' ? '  (test)' : ''}${ACCESS_NOTE[t.access] ? `: ${ACCESS_NOTE[t.access]}` : ''}`,
+  }));
+  if (list.hiddenTest && !showTest) items.push({ value: '__test', label: `Show ${list.hiddenTest} test target${list.hiddenTest > 1 ? 's' : ''}` });
+  const initial = Math.max(0, items.findIndex((i) => i.value === current));
+  return (
+    <Box flexDirection="column">
+      <Text>Which knowledge repo should Bookwyrm look after?</Text>
+      <Text dimColor>These are the repos Archivist runs on, from its registry ({list.source}). Not listed? Ask the Archivist owners to add it.</Text>
+      <Box marginTop={1}>
+        {checking
+          ? <Text><Text color={ACCENT}><Spinner type="dots" /></Text> Checking {checking}…</Text>
+          : ok
+            ? <Text color={ok.startsWith('!') ? 'yellow' : 'green'}>{ok}</Text>
+            : <Select items={items} initial={initial} onSelect={(v) => (v === '__test' ? setShowTest(true) : choose(v))} />}
+      </Box>
+      {problem ? <Box marginTop={1}><Text color="yellow">! {problem}</Text></Box> : null}
+      {!checking && !ok ? <Hint>↑↓ to choose · Enter to pick</Hint> : null}
     </Box>
   );
 }
@@ -299,7 +371,6 @@ function KeyStep({ ctx, spec, onDone }) {
 function Keys({ ctx, onNext }) {
   const have = existingKeys(ctx.profile);
   const [which, setWhich] = useState(0);
-  const repo = ctx.answers.repo;
   const a = ctx.answers;
   const modelSpec = a.provider === 'gateway'
     ? {
@@ -333,13 +404,13 @@ function Keys({ ctx, onNext }) {
       short: 'GitHub token',
       service: 'GitHub',
       explain: [
-        `A fine-grained token that can reach only ${repo || 'your knowledge repo'}. It's the fence on what Bookwyrm can touch.`,
+        'A fine-grained token that can reach only your knowledge repo. It\'s the fence on what Bookwyrm can touch.',
         'When you make it: Repository access → Only select repositories → the knowledge repo.',
         'Permissions → Contents, Issues and Pull requests: Read and write. Nothing else.',
       ],
       url: GITHUB_TOKEN_URL,
       existing: have.githubToken,
-      check: (t) => (repo ? checkGitHub(t, repo) : Promise.resolve({ ok: true, message: 'Not checked (no repo given).' })),
+      check: checkGitHubToken,   // which repos it covers shows on the next screen
       field: 'githubToken',
     },
   ];
@@ -526,12 +597,13 @@ function Done({ ctx, failed }) {
 
 export function Wizard({ ctx }) {
   const chosen = selectedSteps(ctx.opts);
-  const screens = ['welcome', ...(needsAbout(chosen) ? ['about'] : []), ...(needsKeys(chosen) ? ['model', 'keys'] : []), 'install', 'done'];
+  const screens = ['welcome', ...(needsAbout(chosen) ? ['about'] : []), ...(needsKeys(chosen) ? ['model', 'keys'] : []),
+    ...(needsAbout(chosen) ? ['repo'] : []), 'install', 'done'];
   const [n, setN] = useState(0);
   const [failed, setFailed] = useState([]);
   const screen = screens[n];
   const next = () => setN((v) => v + 1);
-  const titles = { welcome: '', about: 'About you', model: 'Model', keys: 'Keys', install: ctx.opts.dryRun ? 'Plan' : 'Installing', done: 'Done' };
+  const titles = { welcome: '', about: 'About you', model: 'Model', keys: 'Keys', repo: 'Knowledge repo', install: ctx.opts.dryRun ? 'Plan' : 'Installing', done: 'Done' };
   return (
     <Box flexDirection="column" paddingX={1} paddingTop={1}>
       <Header step={titles[screen]} dryRun={ctx.opts.dryRun} />
@@ -539,6 +611,7 @@ export function Wizard({ ctx }) {
       {screen === 'about' && <About ctx={ctx} onNext={next} />}
       {screen === 'model' && <Model ctx={ctx} onNext={next} />}
       {screen === 'keys' && <Keys ctx={ctx} onNext={next} />}
+      {screen === 'repo' && <Repo ctx={ctx} onNext={next} />}
       {(screen === 'install' || screen === 'done') && (
         // Stays on screen under Done, so the finished checklist (or the dry-run plan) remains readable.
         <Install ctx={ctx} onNext={(rows) => { setFailed(STEPS.filter((st) => rows[st.id].status === 'failed').map((st) => st.title)); next(); }} />

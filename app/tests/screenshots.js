@@ -20,6 +20,14 @@ ipcMain.handle("os:info", () => ({ platform: OS, accent: "#0a84ff", accentText: 
 ipcMain.handle("login:get", () => true);
 ipcMain.handle("companion:visible", () => true);
 ipcMain.handle("app:info", () => ({ log: "~/.bookwyrm/voice.log", platform: OS }));
+// The real registry lookup, as main.js does it: the setup wizard under Electron's own Node.
+ipcMain.handle("targets:list", (_e, opts = {}) => new Promise((resolve) => {
+  const { execFile } = require("node:child_process");
+  const args = [path.join(__dirname, "..", "..", "setup", "dist", "setup.mjs"), "--targets-json", ...(opts.showTest ? ["--show-test-targets"] : [])];
+  execFile(process.execPath, args, { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, (err, out) => {
+    try { resolve(JSON.parse(out.trim().split("\n").pop())); } catch { resolve({ error: err?.message || "no output" }); }
+  });
+}));
 for (const ch of ["window:shape", "window:interactive", "menu:robot", "drag:start", "drag:end", "call:state", "window:open"]) ipcMain.on(ch, () => {});
 
 // What sits behind the transparent companion on a real desktop, and the OS sidebar material.
@@ -69,6 +77,7 @@ const WINDOW = {
   "window-settings": { js: `document.getElementById('nav-settings').click()` },
   "window-settings-model": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{document.getElementById("settings-view").querySelector(".scroller").scrollTop=250},900)` },
   "window-settings-switch": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{const f=document.getElementById("settings"); f.provider.value="anthropic"; f.provider.dispatchEvent(new Event("change")); document.getElementById("settings-view").querySelector(".scroller").scrollTop=250},2500)` },
+  "window-settings-repo": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{document.getElementById("settings-view").querySelector(".scroller").scrollTop=520},6000)` },
   "window-chat-dark": { dark: true, js: `document.querySelector('.conv')?.click()` },
 };
 
@@ -102,7 +111,7 @@ app.whenReady().then(async () => {
     await win.webContents.insertCSS(MATERIAL);
     await new Promise((r) => setTimeout(r, 1200));
     await win.webContents.executeJavaScript(scene.js);
-    await new Promise((r) => setTimeout(r, name.includes("library") || name.includes("switch") ? 3500 : 1500));
+    await new Promise((r) => setTimeout(r, name.includes("repo") ? 8000 : name.includes("library") || name.includes("switch") ? 3500 : 1500));
     fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
     console.log("shot", name);
   }

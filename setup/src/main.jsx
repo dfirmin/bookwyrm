@@ -30,6 +30,26 @@ if (opts.help) {
 }
 
 const ctx = { opts, profile: opts.profile, answers: prefill(opts), hermes: null, uv: null, gatewayRestart: false };
+
+// For the app (Settings → Knowledge repo, the Library): the registry's targets, what the saved
+// token can do in each, and whether the saved repo is still an active target. One line of JSON.
+if (opts.targetsJson) {
+  const [{ existingKeys }, { listTargets, validateTarget }] = await Promise.all([import('./state.js'), import('./registry.js')]);
+  const a = ctx.answers;
+  const token = process.env.GITHUB_PERSONAL_ACCESS_TOKEN || existingKeys(ctx.profile).githubToken;
+  const out = { registry: a.registry };
+  try {
+    Object.assign(out, await listTargets({ registry: a.registry, token, current: a.savedRepo, showTest: opts.showTest }));
+  } catch (err) {
+    out.error = err.message;
+  }
+  if (a.savedRepo) {
+    const v = await validateTarget(a.savedRepo, { registry: a.registry, token, keepIfUnreachable: true });
+    out.current = { repo: a.savedRepo, ok: v.ok, message: v.message || '', warn: v.warn || '' };
+  }
+  process.stdout.write(`${JSON.stringify(out)}\n`);
+  process.exit(0);
+}
 const plain = opts.plain || opts.yes || !process.stdout.isTTY || !process.stdin.isTTY;
 
 if (plain) {

@@ -88,8 +88,11 @@ curl -fsSL https://raw.githubusercontent.com/dfirmin/bookwyrm/main/install.sh | 
 irm https://raw.githubusercontent.com/dfirmin/bookwyrm/main/install.ps1 | iex
 ```
 
-A setup wizard asks for your name, team, knowledge repo and the two keys (it checks them as you
-go), then installs everything with a checklist: Hermes Agent, the GitHub MCP server, the
+A setup wizard asks for your name, team and the two keys (it checks them as you go), then lets
+you pick the knowledge repo from **Archivist's registry** (`targets.yaml` in the Archivist repo):
+only active targets are offered, and Bookwyrm confirms the repo carries Archivist's
+`contracts/target.yaml` before using it, so it can't be pointed at an arbitrary repo by mistake
+(see [ADR 0006](docs/adr/0006-knowledge-repo-from-the-registry.md)). Then it installs everything with a checklist: Hermes Agent, the GitHub MCP server, the
 `bookwyrm` Hermes profile, Hermes' local API, the voice service and its speech models (about
 1 GB, once), and the companion app, which it adds to Applications / the Start menu / your app
 menu. It fetches Node.js 22 for itself if you don't have it, and keeps Bookwyrm in `~/bookwyrm`

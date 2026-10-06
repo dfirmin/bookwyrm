@@ -5,7 +5,9 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "bin": { "bookwyrm-setup": "dist/setup.mjs" },
+  "bin": {
+    "bookwyrm-setup": "dist/setup.mjs"
+  },
   "scripts": {
     "build": "esbuild src/main.jsx --bundle --platform=node --format=esm --target=node22 --packages=external --jsx=automatic --outfile=dist/setup.mjs --log-level=warning",
     "postinstall": "npm run build",
@@ -16,7 +18,8 @@
     "ink": "^8.0.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
-    "react": "^19.3.0"
+    "react": "^19.3.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

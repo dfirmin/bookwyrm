@@ -19,6 +19,48 @@ const steps = await import('../src/steps.js');
 const state = await import('../src/state.js');
 
 // LF here whatever the checkout used (git on Windows may give CRLF); the CRLF test adds its own.
+const registry = await import('../src/registry.js');
+
+// A pretend GitHub: the registry on raw.githubusercontent.com and a few repos on the API.
+const REGISTRY_YAML = `targets:
+  - { slug: o-n, name: O N, description: Test repo, target_repo: https://github.com/o/n, type: docs, status: active }
+  - { slug: kb-test, name: KB Test, description: A test target, target_repo: https://github.com/o/kb-test, type: test, status: active }
+  - { slug: old-kb, name: Old KB, description: Retired, target_repo: https://github.com/o/old-kb, type: docs, status: inactive }
+  - { slug: ro-kb, name: Read-only KB, description: x, target_repo: https://github.com/o/ro-kb, type: docs, status: active }
+  - { slug: bare, name: Bare, description: Never scaffolded, target_repo: https://github.com/o/bare, type: docs, status: active }
+  - { slug: wrong-slug, name: Wrong, description: Marker disagrees, target_repo: https://github.com/o/wrong, type: docs, status: active }
+  - { slug: hidden, name: Hidden, description: Token can't see it, target_repo: https://github.com/o/hidden, type: docs, status: active }
+  - { name: no slug }
+`;
+const REPOS = {
+  'o/n': { push: true, marker: 'slug: o-n\nengine: 9166d2a3\n' },
+  'o/kb-test': { push: true, marker: 'slug: kb-test\n' },
+  'o/old-kb': { push: true, marker: 'slug: old-kb\n' },
+  'o/ro-kb': { push: false, marker: 'slug: ro-kb\n' },
+  'o/bare': { push: true, marker: null },
+  'o/wrong': { push: true, marker: 'slug: something-else\n' },
+};
+async function withFakeGitHub(fn, { registryDown = false } = {}) {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    const reply = (status, body) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
+    if (u.startsWith('https://raw.githubusercontent.com/')) {
+      if (registryDown) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } });
+      return u.endsWith('/dfirmin/archivist/main/targets.yaml') ? reply(200, REGISTRY_YAML) : reply(404, '404: Not Found');
+    }
+    const m = /^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)(\/contents\/contracts\/target\.yaml)?$/.exec(u);
+    if (m) {
+      const repo = REPOS[m[1]];
+      if (!repo) return reply(404, { message: 'Not Found' });
+      if (!m[2]) return reply(200, { full_name: m[1], permissions: { push: repo.push } });
+      return repo.marker ? reply(200, repo.marker) : reply(404, { message: 'Not Found' });
+    }
+    return real(url);
+  };
+  try { return await fn(); } finally { globalThis.fetch = real; }
+}
+
 const config = fs.readFileSync(path.join(sys.paths.repo, 'profile', 'config.yaml'), 'utf8').replace(/\r\n/g, '\n');
 
 test('paths live under the (temp) home', () => {
@@ -106,6 +148,7 @@ test('settings.json: merged, unknown keys kept, defaults fill gaps', () => {
 test('prefill: flags, then settings.json, then the old voice/.env', () => {
   fs.writeFileSync(sys.paths.settings, JSON.stringify({ name: 'From Settings', repo: 'a/b' }));
   assert.deepEqual(state.prefill({ team: 'Flag Team' }), {
+    registry: 'dfirmin/archivist', savedRepo: 'a/b',
     name: 'From Settings', team: 'Flag Team', repo: 'a/b', provider: 'anthropic', gatewayUrl: '', gatewayModel: '',
   });
   // The gateway choice is remembered in settings.json and comes back next time.
@@ -151,7 +194,7 @@ test('profile step on an existing profile: renders files, adds the template once
   const profile = steps.STEPS.find((s) => s.id === 'profile');
   const ctx = { opts: {}, profile: 'bookwyrm', answers: { repo: 'o/n', githubToken: 'github_pat_testtesttest' } };
   const io = { log: () => {}, progress: () => {} };
-  const res = await profile.run(ctx, io);
+  const res = await withFakeGitHub(() => profile.run(ctx, io));
   assert.equal(res.warn, undefined);
   const env = fs.readFileSync(path.join(dir, '.env'), 'utf8');
   assert.equal(env.match(/^ANTHROPIC_API_KEY=/gm).length, 1);
@@ -167,7 +210,7 @@ test('profile step on an existing profile: renders files, adds the template once
 
   // Second run with nothing new: nothing changes.
   const ctx2 = { opts: {}, profile: 'bookwyrm', answers: { repo: 'o/n' } };
-  assert.equal((await profile.run(ctx2, io)).note, 'up to date');
+  assert.equal((await withFakeGitHub(() => profile.run(ctx2, io))).note, 'up to date');
   assert.equal(ctx2.gatewayRestart, undefined);
   assert.equal(fs.readFileSync(path.join(dir, '.env'), 'utf8'), env);
 });
@@ -248,3 +291,66 @@ test('gateway: settings remember the choice; switching back to Anthropic is reme
   s = JSON.parse(fs.readFileSync(sys.paths.settings, 'utf8'));
   assert.deepEqual(s.model, { provider: 'anthropic' });
 });
+
+test('registry: parsing follows Archivist\'s rules; bad entries are reported, not fatal', () => {
+  const { targets, problems } = registry.parseRegistry(REGISTRY_YAML);
+  assert.equal(targets.length, 7);
+  assert.deepEqual(problems, ['targets[7]: missing or invalid slug']);
+  assert.equal(targets.find((t) => t.slug === 'old-kb').active, false);
+  assert.equal(registry.githubSlug('https://github.com/o/n.git'), 'o/n');
+  assert.equal(registry.githubSlug('http://github.com/o/n'), null);
+  assert.equal(registry.githubSlug('https://gitlab.com/o/n'), null);
+  assert.deepEqual(registry.registrySource('acme/archivist@release').url, 'https://raw.githubusercontent.com/acme/archivist/release/targets.yaml');
+  assert.throws(() => registry.registrySource('not a repo'), /owner\/repo/);
+  assert.throws(() => registry.parseRegistry('targets: []'), /no targets/);
+});
+
+test('registry: only active, scaffolded targets the token can write to', () => withFakeGitHub(async () => {
+  const token = 'github_pat_x';
+  const v = (repo, o = {}) => registry.validateTarget(repo, { token, ...o });
+  const ok = await v('o/n');
+  assert.equal(ok.ok, true);
+  assert.match(ok.message, /O N: o\/n is the Archivist target "o-n", on engine 9166d2a/);
+  assert.equal((await v('O/N')).ok, true);                                  // GitHub names aren't case-sensitive
+  assert.match((await v('someone/random')).message, /isn't in the Archivist registry \(dfirmin\/archivist\).*pull request/);
+  assert.match((await v('o/old-kb')).message, /status is "inactive"/);
+  assert.match((await v('o/hidden')).message, /token can't reach o\/hidden/);
+  assert.match((await v('o/ro-kb')).message, /can read o\/ro-kb but not write/);
+  assert.match((await v('o/bare')).message, /no contracts\/target\.yaml/);
+  assert.match((await v('o/wrong')).message, /names the target "something-else", but the registry lists it as "wrong-slug"/);
+}));
+
+test('registry: unreachable registry blocks a new repo but keeps the saved one', async () => {
+  await withFakeGitHub(async () => {
+    const fresh = await registry.validateTarget('o/n', { token: 't' });
+    assert.equal(fresh.ok, false);
+    assert.match(fresh.message, /Couldn't reach the Archivist registry/);
+    const kept = await registry.validateTarget('o/n', { token: 't', keepIfUnreachable: true });
+    assert.equal(kept.ok, true);
+    assert.match(kept.warn, /Keeping o\/n/);
+  }, { registryDown: true });
+});
+
+test('registry: the picker lists active targets; test targets only on request or when already chosen', () => withFakeGitHub(async () => {
+  const slugs = (l) => l.targets.map((t) => t.slug);
+  const plain = await registry.listTargets({ token: 't' });
+  assert.deepEqual(slugs(plain), ['o-n', 'ro-kb', 'bare', 'wrong-slug', 'hidden']);
+  assert.equal(plain.hiddenTest, 1);
+  assert.deepEqual(plain.targets.map((t) => t.access), ['write', 'read', 'write', 'write', 'none']);
+  assert.ok(slugs(await registry.listTargets({ token: 't', showTest: true })).includes('kb-test'));
+  assert.ok(slugs(await registry.listTargets({ token: 't', current: 'o/kb-test' })).includes('kb-test'));
+  assert.ok(!slugs(await registry.listTargets({ token: 't', current: 'o/old-kb' })).includes('nope'));
+}));
+
+test('profile step refuses a repo Archivist doesn\'t run on, and writes nothing', () => withFakeGitHub(async () => {
+  const dir = sys.profileDir('bookwyrm');
+  const before = fs.readFileSync(path.join(dir, 'SOUL.md'), 'utf8');
+  const profile = steps.STEPS.find((s) => s.id === 'profile');
+  const ctx = { opts: {}, profile: 'bookwyrm', answers: { repo: 'someone/random', githubToken: 'github_pat_x' } };
+  await assert.rejects(profile.run(ctx, { log: () => {}, progress: () => {} }), (err) => {
+    assert.match(err.message, /isn't in the Archivist registry/);
+    assert.match(err.hint, /Settings → Knowledge repo/);
+    return true;
+  });
+  assert.equal(fs.readFileSync(path.join(dir, 'SOUL.md'), 'utf8'), before);
+}));

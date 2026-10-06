@@ -38,7 +38,9 @@ irm https://raw.githubusercontent.com/dfirmin/bookwyrm/main/install.ps1 | iex
 A setup wizard opens in that window. It asks for:
 
 - your name and team, so Bookwyrm knows who it's talking to;
-- the knowledge repo, as `owner/name`;
+- which knowledge repo to look after, picked from the repos Archivist runs on (its registry).
+  Test repos are hidden unless you ask to see them, and repos your GitHub token can't reach are
+  marked;
 - the two keys.
 
 Then it installs everything, ticking off each step as it goes:
@@ -101,7 +103,8 @@ an issue.
   - your name and team;
   - how Bookwyrm reaches Claude: Anthropic directly or your company's gateway (**Save and check**
     tests a change before Bookwyrm uses it);
-  - the knowledge repo and keys (changing these re-runs the relevant setup steps for you);
+  - the knowledge repo, picked from Archivist's registry, and the GitHub token (changing these
+    re-runs the relevant setup steps for you);
   - Bookwyrm's voice (press **Play** to hear one) and its speaking speed;
   - calls from Bookwyrm;
   - opening at login, and showing the robot.
@@ -135,6 +138,9 @@ The card and Settings → *Voice service* say what's wrong.
 | "Bookwyrm's brain (Hermes) isn't running" | In Terminal or PowerShell: `hermes gateway restart` |
 | "I can't reach the repo", or the Library shows a GitHub error | The token has expired or doesn't cover the repo. Settings → GitHub token → **Replace…** |
 | Bookwyrm can't answer anything | Settings → Model: check the Anthropic key, or the gateway address, model name and key. **Save and check** tests them |
+| My knowledge repo isn't in the list | Bookwyrm only looks after repos in Archivist's registry. Ask the Archivist owners to add it to `targets.yaml` (a pull request), then pick it in Settings → Knowledge repo |
+| A repo in the list says your token can't reach it | Make a fine-grained GitHub token that includes that repo, and save it in Settings → GitHub token |
+| The Library says the repo is no longer an active target | It's been retired in the registry. Choose another in Settings → Knowledge repo |
 | Using a gateway: answers stop off the company network | The gateway is only reachable on the network or VPN. Speech still works; thinking needs the gateway |
 | "Voice isn't set up on this computer" | Run the install line again |
 | No sound from Bookwyrm | Check the computer's output device. The captions on the card show what it's saying |

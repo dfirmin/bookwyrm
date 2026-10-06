@@ -4,9 +4,10 @@ import readline from 'node:readline';
 import { runSteps } from './engine.js';
 import { STEPS } from './steps.js';
 import {
-  ANTHROPIC_KEY_URL, GITHUB_TOKEN_URL, REPO_RE, checkAnthropic, checkGateway, checkGitHub, detectState, existingKeys,
-  normalizeGatewayUrl, selectedSteps,
+  ANTHROPIC_KEY_URL, GITHUB_TOKEN_URL, checkAnthropic, checkGateway, checkGitHub, checkGitHubToken, detectState,
+  existingKeys, normalizeGatewayUrl, selectedSteps,
 } from './state.js';
+import { listTargets, validateTarget } from './registry.js';
 import { addSecret, mask } from './sys.js';
 import { finish, needsAbout, needsKeys, openLaterHint } from './finish.js';
 
@@ -75,14 +76,9 @@ export async function runPlain(ctx) {
       const a = ctx.answers;
       a.name = (await p.ask(`  Your name${a.name ? ` [${a.name}]` : ''}: `)) || a.name;
       a.team = (await p.ask(`  Your team${a.team ? ` [${a.team}]` : ''}: `)) || a.team;
-      for (let tries = 0; ; tries++) {
-        const repo = (await p.ask(`  Knowledge repo, owner/name${a.repo ? ` [${a.repo}]` : ''}: `)) || a.repo;
-        if (REPO_RE.test(repo)) { a.repo = repo; break; }
-        out('  That should look like owner/name, for example dfirmin/archivist-knowledge-01.');
-        if (tries >= 4) throw new Error('no valid knowledge repo given');
-      }
     }
     if (needsKeys(chosen)) await keys(ctx, p);
+    if (interactive && needsAbout(chosen)) await chooseRepo(ctx, p);
     if (!ctx.answers.repo && needsAbout(chosen) && !ctx.opts.dryRun) out('! No knowledge repo given (--repo owner/name); the profile step will need one.');
 
     out();
@@ -232,10 +228,48 @@ async function keys(ctx, p) {
     existing: have.githubToken,
     url: GITHUB_TOKEN_URL,
     explain: [
-      `A fine-grained GitHub token for ${a.repo || 'the knowledge repo'} only.`,
+      'A fine-grained GitHub token for your knowledge repo only.',
       'Repository access: Only select repositories → the knowledge repo.',
       'Permissions: Contents, Issues, Pull requests → Read and write. Nothing else.',
     ],
-    check: (t) => (a.repo ? checkGitHub(t, a.repo) : Promise.resolve({ ok: true, message: 'Not checked (no repo yet).' })),
+    check: checkGitHubToken,   // the next question shows which repos it covers
   });
+}
+
+/** Pick an active target from the Archivist registry (numbered list). */
+async function chooseRepo(ctx, p) {
+  const a = ctx.answers;
+  const token = a.githubToken || existingKeys(ctx.profile).githubToken;
+  let showTest = Boolean(ctx.opts.showTest);
+  out();
+  out('Knowledge repo');
+  for (;;) {
+    let list;
+    try {
+      list = await listTargets({ registry: a.registry, token, current: a.repo || a.savedRepo, showTest });
+    } catch (err) {
+      out(`  ! ${err.message}`);
+      if (a.savedRepo && await yesNo(p, `  Keep ${a.savedRepo} for now (it's checked again next time)?`, true)) { a.repo = a.savedRepo; return; }
+      if (!(await yesNo(p, '  Try again?', true))) throw new Error('no knowledge repo chosen');
+      continue;
+    }
+    out(`  The repos Archivist runs on, from its registry (${list.source}):`);
+    const current = a.repo || a.savedRepo;
+    list.targets.forEach((t, i) => {
+      const note = t.access === 'none' ? '  (your token can\'t reach it)' : t.access === 'read' ? '  (read-only for your token)' : '';
+      out(`  ${String(i + 1).padStart(2)}. ${t.name}  ${t.repo}${t.type === 'test' ? '  (test)' : ''}${note}`);
+    });
+    const more = list.hiddenTest && !showTest;
+    if (more) out(`   t. show ${list.hiddenTest} test target${list.hiddenTest > 1 ? 's' : ''}`);
+    const def = Math.max(0, list.targets.findIndex((t) => t.repo === current)) + 1;
+    const pick = (await p.ask(`  Choose a number${list.targets.length ? ` [${def}]` : ''}: `)) || String(def);
+    if (more && pick.toLowerCase() === 't') { showTest = true; continue; }
+    const target = list.targets[Number(pick) - 1];
+    if (!target) { out('  That isn\'t one of the numbers above.'); continue; }
+    const v = await validateTarget(target.repo, { registry: a.registry, token, keepIfUnreachable: target.repo === a.savedRepo });
+    if (!v.ok) { out(`  ! ${v.message}`); continue; }
+    out(`  ${v.warn ? `! ${v.warn}` : `✓ ${v.message}`}`);
+    a.repo = target.repo;
+    return;
+  }
 }

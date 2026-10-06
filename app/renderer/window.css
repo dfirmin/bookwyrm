@@ -166,6 +166,9 @@ body:not([data-os="linux"]) .group { background: color-mix(in srgb, var(--label)
 }
 .row input[type="password"] { flex: 1; text-align: left; }
 .row select { text-align: left; min-width: 0; }
+#repo { max-width: 340px; }
+.banner { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, #ff9f0a 14%, transparent); }
+.banner button { margin-left: 8px; }
 .row input:focus-visible, .row select:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 40%, transparent); outline-offset: 0; }
 .slider small { color: var(--label-2); }
 .slider input { width: 160px; accent-color: var(--accent); }

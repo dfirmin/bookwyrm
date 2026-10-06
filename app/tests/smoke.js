@@ -57,8 +57,12 @@ app.whenReady().then(async () => {
   check(b4.x + b4.width <= wa.x + wa.width && b4.y + b4.height <= wa.y + wa.height, "never left off screen");
 
   emit("window:open", { view: "settings" });
-  await wait(2500);
-  const win = BrowserWindow.getAllWindows().find((w) => w !== companion);
+  let win = null;
+  for (let i = 0; i < 40 && !(win && win.isVisible()); i++) {   // up to 10 s on a cold machine
+    await wait(250);
+    win = BrowserWindow.getAllWindows().find((w) => w !== companion);
+  }
+  await wait(1000);
   check(!!win && win.isVisible(), "Bookwyrm window opens");
   const title = await win.webContents.executeJavaScript("document.getElementById('view-title').textContent");
   check(title === "Settings", `opens on the page asked for (${title})`);

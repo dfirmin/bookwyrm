@@ -125,6 +125,8 @@ test('arguments', () => {
   assert.equal(o.dryRun, true);
   assert.deepEqual(state.selectedSteps(o), ['voice', 'models']);
   assert.throws(() => state.parseArgs(['--only', 'voice,nope']), /unknown step nope/);
+  // PowerShell hands over an unquoted voice,models,app as three arguments.
+  assert.deepEqual(state.parseArgs(['--only', 'voice', 'models', 'app', '--yes']).only, ['voice', 'models', 'app']);
   assert.throws(() => state.parseArgs(['--repo', 'not a repo']), /owner\/name/);
   assert.throws(() => state.parseArgs(['--name']), /needs a value/);
   assert.throws(() => state.parseArgs(['--frobnicate']), /unknown option/);

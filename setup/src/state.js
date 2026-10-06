@@ -63,8 +63,13 @@ export function parseArgs(argv) {
       case '--caller': Object.assign(opts, splitCaller(take(i++, a))); break;
       case '--profile': opts.profile = take(i++, a); break;
       case '--github-mcp-bin': opts.githubMcpBin = take(i++, a); break;
-      case '--only': opts.only = list(take(i++, a), a); break;
-      case '--skip': opts.skip = list(take(i++, a), a); break;
+      case '--only': case '--skip': {
+        // "a,b,c", or "a b c": PowerShell passes an unquoted a,b,c as separate arguments.
+        let v = take(i++, a);
+        while (argv[i + 1] !== undefined && !argv[i + 1].startsWith('-')) v += `,${argv[++i]}`;
+        if (a === '--only') opts.only = list(v, a); else opts.skip = list(v, a);
+        break;
+      }
       case '-h': case '--help': opts.help = true; break;
       default: throw new Error(`unknown option: ${a} (try --help)`);
     }

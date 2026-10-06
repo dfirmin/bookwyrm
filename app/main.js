@@ -19,7 +19,10 @@ const MARGIN = 14;
 
 let win = null;
 let voiceProc = null;
+let voiceExit = null;     // why the service we started stopped, if it did
 let shape = "docked";
+const LOG_DIR = path.join(require("node:os").homedir(), ".bookwyrm");
+const VOICE_LOG = path.join(LOG_DIR, "voice.log");
 
 function place(size) {
   const { workArea } = screen.getPrimaryDisplay();
@@ -62,15 +65,40 @@ async function voiceHealth() {
   }
 }
 
+const voicePython = () => path.join(VOICE_DIR, ".venv", "bin", "python");
+
 function startVoiceService() {
-  const py = path.join(VOICE_DIR, ".venv", "bin", "python");
-  if (!fs.existsSync(py)) return false; // not set up; the card explains how
-  voiceProc = spawn(py, ["-m", "bookwyrm_voice.server"], { cwd: VOICE_DIR, stdio: "ignore" });
-  voiceProc.on("exit", () => (voiceProc = null));
+  if (!fs.existsSync(voicePython())) return false; // not set up; the card explains how
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+  const log = fs.openSync(VOICE_LOG, "w");
+  voiceExit = null;
+  voiceProc = spawn(voicePython(), ["-m", "bookwyrm_voice.server"], { cwd: VOICE_DIR, stdio: ["ignore", log, log] });
+  voiceProc.on("exit", (code, signal) => {
+    voiceProc = null;
+    voiceExit = { code, signal, tail: lastLines(VOICE_LOG, 6) };
+  });
   return true;
 }
 
-ipcMain.handle("voice:health", async () => voiceHealth());
+function lastLines(file, n) {
+  try {
+    return fs.readFileSync(file, "utf8").trim().split("\n").slice(-n).join("\n");
+  } catch {
+    return "";
+  }
+}
+
+// What the card should say: {ok, hermes, models, loading, error} from the service when it answers,
+// otherwise why it doesn't: not set up, starting, or stopped (with the end of its log).
+ipcMain.handle("voice:health", async () => {
+  const h = await voiceHealth();
+  if (h) return h;
+  if (!fs.existsSync(voicePython())) return { down: "not-set-up" };
+  if (voiceExit) return { down: "stopped", detail: voiceExit.tail, log: VOICE_LOG };
+  if (voiceProc) return { down: "starting" };
+  startVoiceService();   // e.g. a copy started by hand was closed: start ours
+  return { down: "starting" };
+});
 ipcMain.handle("voice:url", () => VOICE_URL);
 
 // ---- window shape and menus ------------------------------------------------------------------

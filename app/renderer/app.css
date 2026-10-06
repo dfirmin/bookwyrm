@@ -78,7 +78,7 @@ body[data-shape="open"] .card { display: flex; }
 .lines li .who { font: 600 12px/0 var(--sans); color: var(--ink-soft); margin-right: 6px; }  /* line-height 0: labels must not stretch the ruled rows */
 .lines li.bot .who { color: var(--bookcloth); }
 .lines li.you { color: var(--ink-soft); }
-.lines li.note { font: italic 14px/26px var(--serif); color: var(--ink-soft); }
+.lines li.note { font: italic 14px/26px var(--serif); color: var(--ink-soft); white-space: pre-wrap; }
 .lines .said.live { opacity: 0.5; }
 
 .type { padding: 0 14px 10px; }

@@ -1,7 +1,7 @@
 // What's already on this machine, what the person told us last time, and checking their keys.
 import fs from 'node:fs';
 import path from 'node:path';
-import { STEP_IDS, loadLauncher, modelsPresent } from './steps.js';
+import { STEP_IDS, VOICE_ENGINES, loadLauncher, modelsPresent } from './steps.js';
 import { DEFAULT_REGISTRY } from './registry.js';
 import { findHermes, paths, profileDir, readEnvFile, readJson } from './sys.js';
 
@@ -34,6 +34,9 @@ export const HELP = `Bookwyrm setup
                          company's LiteLLM / OpenAI-compatible gateway
   --gateway-url URL      the gateway's base URL, e.g. https://litellm.example.com/v1
   --gateway-model NAME   the model name the gateway uses for Claude
+  --voice-engine auto|kokoro|chatterbox-turbo-mlx|chatterbox-turbo|chatterbox-nano
+                         which voice to install (default auto: the most natural one this computer
+                         can run; kokoro skips the natural voice and its 1 to 3 GB download)
   --github-mcp-bin PATH  use this GitHub MCP server binary instead of downloading one
   --profile NAME         Hermes profile name (default bookwyrm)
   --plain                plain text output, no animations
@@ -79,6 +82,12 @@ export function parseArgs(argv) {
       case '--show-test-targets': opts.showTest = true; break;
       case '--targets-json': opts.targetsJson = true; break;
       case '--github-mcp-bin': opts.githubMcpBin = take(i++, a); break;
+      case '--voice-engine': {
+        const v = take(i++, a).toLowerCase();
+        if (!VOICE_ENGINES.includes(v)) throw new Error(`--voice-engine is one of ${VOICE_ENGINES.join(', ')}, got "${v}"`);
+        opts.voiceEngine = v;
+        break;
+      }
       case '--provider': {
         const v = take(i++, a).toLowerCase();
         if (!['anthropic', 'gateway', 'litellm'].includes(v)) throw new Error(`--provider is anthropic or gateway, got "${v}"`);

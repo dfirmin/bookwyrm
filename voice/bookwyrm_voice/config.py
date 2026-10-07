@@ -24,7 +24,7 @@ VOICE_DIR = PACKAGE_DIR.parent
 
 # Settings the app may change (PUT /api/settings). Repo and keys go through the setup wizard,
 # because they also change the Hermes profile.
-EDITABLE = ("name", "team", "voice", "voice_speed", "calls_you", "watch_minutes")
+EDITABLE = ("name", "team", "voice", "voice_speed", "voice_engine", "natural_voice", "calls_you", "watch_minutes")
 
 
 def data_dir() -> Path:
@@ -88,8 +88,12 @@ class Settings:
     profile_env: Path = Path()
 
     models_dir: Path = Path.home() / ".bookwyrm" / "models"
-    voice: str = "af_heart"
-    voice_speed: float = 1.0
+    voice: str = "af_heart"          # Kokoro's voice
+    voice_speed: float = 1.0          # Kokoro only; Chatterbox has no speed knob
+    # The speaking engine (see speakers.py). Setup picks the best one this machine can run.
+    voice_engine: str = "kokoro"
+    natural_voice: str = "default"    # Chatterbox's voice: "default" or a recording in voices_dir
+    voices_dir: Path = Path.home() / ".bookwyrm" / "voices"
 
     # Local server the companion app talks to.
     host: str = "127.0.0.1"
@@ -146,12 +150,13 @@ class Settings:
             "model": model,
             "name": self.name, "team": self.team, "repo": self.repo, "profile": self.profile,
             "voice": self.voice, "voice_speed": self.voice_speed,
+            "voice_engine": self.voice_engine, "natural_voice": self.natural_voice,
             "calls_you": self.calls_you, "watch_minutes": self.watch_minutes,
             "keys": {"github": bool(self.github_token), "hermes_api": bool(self.hermes_key),
                      "anthropic": bool(secrets.get("ANTHROPIC_API_KEY")),
                      "gateway": bool(secrets.get("LITELLM_API_KEY"))},
             "paths": {"settings": str(settings_file()), "profile_env": str(self.profile_env),
-                      "models": str(self.models_dir), "data": str(data_dir())},
+                      "models": str(self.models_dir), "voices": str(self.voices_dir), "data": str(data_dir())},
         }
 
 
@@ -197,6 +202,9 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         models_dir=Path(str(pick("BOOKWYRM_MODELS_DIR", "models_dir", str(data_dir() / "models")))).expanduser(),
         voice=str(pick("BOOKWYRM_VOICE", "voice", Settings.voice)),
         voice_speed=float(pick("BOOKWYRM_VOICE_SPEED", "voice_speed", Settings.voice_speed)),
+        voice_engine=str(pick("BOOKWYRM_VOICE_ENGINE", "voice_engine", Settings.voice_engine)),
+        natural_voice=str(pick("BOOKWYRM_NATURAL_VOICE", "natural_voice", Settings.natural_voice)),
+        voices_dir=Path(str(pick("BOOKWYRM_VOICES_DIR", "voices_dir", str(data_dir() / "voices")))).expanduser(),
         host=str(pick("BOOKWYRM_HOST", "", Settings.host)),
         port=int(pick("BOOKWYRM_PORT", "", Settings.port)),
         calls_you=bool(calls_you),

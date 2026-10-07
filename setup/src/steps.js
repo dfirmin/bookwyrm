@@ -52,6 +52,27 @@ export function modelsPresent() {
 const appLockHash = () => fileHash(path.join(paths.app, 'package-lock.json')) || fileHash(path.join(paths.app, 'package.json'));
 const APP_STAMP = path.join(paths.app, 'node_modules', '.bookwyrm-installed');
 const VOICE_STAMP = path.join(paths.voice, '.venv', '.bookwyrm-installed');
+const NATURAL_STAMP = path.join(paths.voice, '.venv', '.bookwyrm-natural-voice');
+
+// The natural voice's model files, per engine (mirrors voice/bookwyrm_voice/models.py ENGINE_MODELS).
+const ENGINE_DIRS = {
+  kokoro: ['kokoro-multi-lang-v1_0/voices.bin'],
+  'chatterbox-turbo-mlx': ['chatterbox-turbo-8bit-mlx/.bookwyrm-complete'],
+  'chatterbox-turbo': ['chatterbox-turbo/.bookwyrm-complete'],
+  'chatterbox-nano': ['chatterbox-nano/.bookwyrm-complete'],
+};
+export const VOICE_ENGINES = ['auto', ...Object.keys(ENGINE_DIRS)];
+
+function engineDownloaded(engine) {
+  return (ENGINE_DIRS[engine] || ['?']).every((f) => fs.existsSync(path.join(paths.models, f)));
+}
+
+/** Set one key in settings.json, keeping everything else. */
+function setSetting(key, value) {
+  const existing = readJson(paths.settings) || {};
+  fs.mkdirSync(path.dirname(paths.settings), { recursive: true });
+  fs.writeFileSync(paths.settings, `${JSON.stringify({ ...existing, [key]: value }, null, 2)}\n`);
+}
 
 function electronInstalled() {
   const { electronBinary } = loadLauncher();
@@ -395,6 +416,79 @@ export const STEPS = [
         throw new StepError('The speech models didn\'t finish downloading.', 'Check your internet connection (GitHub must be reachable) and free disk space (~2 GB), then retry. Finished models are kept.', res.lines.slice(-8));
       }
       return { note: paths.models };
+    },
+  },
+
+  {
+    id: 'natural-voice',
+    doing: (ctx) => ctx.naturalDoing || "Checking which voice this computer can run.",
+    title: 'Natural voice (optional)',
+    detect(ctx) {
+      if (ctx.opts.voiceEngine === 'kokoro') return { done: true, note: 'Standard voice, as asked (--voice-engine kokoro)' };
+      const stamp = (readText(NATURAL_STAMP) || '').trim().split(' ');
+      const [hash, engine] = stamp;
+      const wanted = ctx.opts.voiceEngine && ctx.opts.voiceEngine !== 'auto' ? ctx.opts.voiceEngine : engine;
+      if (hash === voiceHash() && engine && engine === wanted && engineDownloaded(engine)) {
+        return { done: true, note: engine === 'kokoro' ? 'this computer runs the Standard voice' : `${engine} installed` };
+      }
+      return { done: false };
+    },
+    plan: (ctx) => [
+      'python -m bookwyrm_voice.hardware --json   → pick the best voice this computer can run',
+      `uv pip install -e "voice[mlx|torch]"   (only the one it needs; ${ctx.opts.voiceEngine || 'auto'})`,
+      `python -m bookwyrm_voice.models --progress --engine <it>   → ${paths.models}`,
+    ],
+    async run(ctx, io) {
+      if (!fs.existsSync(paths.venvPython)) throw new StepError('The voice service isn\'t installed yet.', 'Run setup again without skipping the "voice" step.');
+      const hw = await run(paths.venvPython, ['-m', 'bookwyrm_voice.hardware', '--json'], { cwd: paths.voice });
+      let info;
+      try { info = JSON.parse(hw.lines.filter((l) => l.startsWith('{')).pop()); } catch { info = null; }
+      if (hw.code !== 0 || !info) throw new StepError('Couldn\'t check this computer\'s hardware.', 'Retry, or skip this step: Bookwyrm keeps the Standard voice.', hw.lines.slice(-8));
+      const asked = ctx.opts.voiceEngine && ctx.opts.voiceEngine !== 'auto' ? ctx.opts.voiceEngine : null;
+      if (asked && info.unsupported[asked]) {
+        throw new StepError(`This computer can't run ${asked}: ${info.unsupported[asked]}.`, `Run setup with --voice-engine ${info.recommended} (or auto) instead.`);
+      }
+      const engine = asked || info.recommended;
+      const done = (note) => {
+        setSetting('voice_engine', engine);
+        fs.writeFileSync(NATURAL_STAMP, `${voiceHash()} ${engine}\n`);
+        return { note };
+      };
+      if (engine === 'kokoro') {
+        const why = Object.values(info.unsupported).filter(Boolean).pop() || '';
+        return done(`${info.machine.summary}. Standard voice${why ? `: the natural one ${why}` : ''}`);
+      }
+      const spec = info.install[engine];
+      const gb = info.download_gb[engine];
+      ctx.naturalDoing = `Installing the natural voice (${engine}, about ${gb} GB, one time). Usually 3 to 10 minutes.`;
+      io.log(ctx.naturalDoing);
+      io.progress({ label: `${engine}: installing its libraries`, done: 0, total: 0 });
+      ctx.uv = ctx.uv || findUv();
+      if (!ctx.uv) throw new StepError('uv isn\'t installed.', 'Run setup again without skipping the "uv" step.');
+      const keep = 'Bookwyrm keeps the Standard voice meanwhile. Retry, or skip this step to stay on Standard.';
+      try {
+        const extra = ['pip', 'install', '--python', paths.venvPython, '-e', `${paths.voice}[${spec.extra}]`];
+        if (spec.torch_backend) extra.push('--torch-backend', spec.torch_backend);
+        await must(io, ctx.uv, extra, { cwd: paths.repo }, 'Couldn\'t install the natural voice\'s libraries.', `Check your internet connection (pypi.org${spec.torch_backend ? ' and download.pytorch.org' : ''}). ${keep}`);
+        if (spec.no_deps.length) {
+          await must(io, ctx.uv, ['pip', 'install', '--python', paths.venvPython, '--no-deps', ...spec.no_deps], { cwd: paths.repo }, 'Couldn\'t install Chatterbox.', `Check that github.com is reachable. ${keep}`);
+        }
+      } catch (err) {
+        if (err instanceof StepError) throw err;
+        throw new StepError(err.message, keep);
+      }
+      const res = await run(paths.venvPython, ['-m', 'bookwyrm_voice.models', '--progress', '--dir', paths.models, '--engine', engine], {
+        cwd: paths.voice,
+        onLine(line) {
+          const [kind, model, got, total] = line.split(' ');
+          if (kind === 'PROGRESS') io.progress({ label: `natural voice (${model})`, done: Number(got), total: Number(total), bytes: true });
+          else if (kind !== 'DONE' && kind !== 'UNPACK') io.log(line);
+        },
+      });
+      if (res.code !== 0) {
+        throw new StepError('The natural voice didn\'t finish downloading.', `It comes from huggingface.co, which some company networks block; check you can open https://huggingface.co, and that there's ${gb} GB free. Finished files are kept. ${keep}`, res.lines.slice(-8));
+      }
+      return done(`${engine} (${info.machine.summary})`);
     },
   },
 

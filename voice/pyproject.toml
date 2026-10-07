@@ -12,6 +12,33 @@ dependencies = [
   "httpx>=0.28,<1",
 ]
 
+# The natural voice (Chatterbox). Setup installs at most one of these, the one this machine can run
+# (python -m bookwyrm_voice.hardware decides), so nobody downloads a stack they can't use.
+[project.optional-dependencies]
+# Apple Silicon Macs: Chatterbox-Turbo on the GPU through Apple's MLX (~150 MB of libraries).
+mlx = [
+  "mlx-audio==0.5.8; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+# Windows and Linux: Chatterbox-Turbo (NVIDIA GPU) or -Nano (CPU) through PyTorch. Setup installs
+# with uv's --torch-backend=auto, which picks the CUDA build when there's an NVIDIA GPU and the
+# much smaller CPU build otherwise. chatterbox-tts itself is installed separately without its own
+# requirements (they pin gradio and numpy<2, neither needed here); these are the ones it uses.
+torch = [
+  "torch>=2.6,<3",
+  "torchaudio>=2.6,<3",
+  "transformers==5.2.0",
+  "diffusers==0.29.0",
+  "librosa==0.11.0",
+  "s3tokenizer",
+  "resemble-perth>=1.0.0",
+  "setuptools<81",          # Perth (the watermark Chatterbox adds) still imports pkg_resources
+  "conformer==0.3.2",
+  "safetensors>=0.5.3",
+  "pyloudnorm",
+  "omegaconf",
+  "einops",
+]
+
 [project.scripts]
 bookwyrm-voice = "bookwyrm_voice.server:main"
 

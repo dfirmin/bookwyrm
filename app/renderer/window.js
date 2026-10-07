@@ -436,16 +436,51 @@ async function loadSettings() {
   $("show-robot").checked = await bw.companionVisible();
   const info = await bw.appInfo();
   $("app-paths").textContent = `Settings: ${settings.paths.settings}. Voice service log: ${info.log}.`;
-  const v = await api("/api/voices").catch(() => ({ voices: [] }));
+  await loadVoices();
+  healthLine();
+}
+
+// Kokoro and the natural voice (Chatterbox) each have their own voices; /api/voices says which
+// settings key the current engine's choice is saved under.
+let voiceSetting = "voice";
+let voicesRetry = null;
+
+async function loadVoices() {
+  const v = await api("/api/voices").catch(() => ({ voices: [], engines: [] }));
+  voiceSetting = v.setting || "voice";
   const sel = $("voice");
-  sel.replaceChildren(...(v.voices.length ? v.voices : [{ id: settings.voice, label: settings.voice, detail: "loading voices" }]).map((x) => {
+  const current = v.current || settings[voiceSetting];
+  sel.replaceChildren(...(v.voices.length ? v.voices : [{ id: current, label: current, detail: "loading voices" }]).map((x) => {
     const o = document.createElement("option");
     o.value = x.id;
     o.textContent = `${x.label} (${x.detail})`;
     return o;
   }));
-  sel.value = settings.voice;
-  healthLine();
+  sel.value = current;
+
+  const eng = $("voice-engine");
+  const engines = v.engines || [];
+  // Best first, as the service lists them; ones this computer can't use are shown, greyed, with why.
+  eng.replaceChildren(...engines.map((e) => {
+    const o = document.createElement("option");
+    o.value = e.id;
+    o.textContent = e.ready ? e.label : `${e.label} (unavailable)`;
+    o.title = e.reason;
+    o.disabled = !e.ready && e.id !== settings.voice_engine;
+    return o;
+  }));
+  eng.value = settings.voice_engine || "kokoro";
+  const s = v.engine || {};
+  const best = engines.find((e) => e.ready);
+  $("engine-note").textContent = v.loading ? "Loading the voice…"
+    : s.note ? `Using Standard for now: ${s.note}`
+    : best && best.id !== "kokoro" && eng.value === "kokoro" ? `${best.label.replace(/ \(.*/, "")} is available on this computer` : "";
+  form.voice_speed.disabled = s.speed_control === false;
+  $("voice-hint").textContent = s.speed_control === false
+    ? `Natural voices speak at their own pace. To use your own voice, put a 5 to 15 second recording (.wav, .flac or .mp3) in ${v.voices_dir || "the voices folder"} and reopen Settings.`
+    : "Natural voices sound like a person on the phone but need a recent computer; Standard runs anywhere. Setup picks the best one this computer can run.";
+  clearTimeout(voicesRetry);
+  if (v.loading) voicesRetry = setTimeout(loadVoices, 3000);
 }
 
 async function healthLine() {
@@ -462,7 +497,12 @@ form.addEventListener("submit", (e) => e.preventDefault());
 for (const name of ["name", "team"]) {
   form[name].addEventListener("change", () => save({ [name]: form[name].value }));
 }
-form.voice.addEventListener("change", () => save({ voice: form.voice.value }));
+form.voice.addEventListener("change", () => save({ [voiceSetting]: form.voice.value }));
+form.voice_engine.addEventListener("change", async () => {
+  await save({ voice_engine: form.voice_engine.value });
+  $("engine-note").textContent = "Loading the voice…";
+  setTimeout(loadVoices, 1500);
+});
 form.voice_speed.addEventListener("change", () => save({ voice_speed: Number(form.voice_speed.value) }));
 form.calls_you.addEventListener("change", () => save({ calls_you: form.calls_you.checked }));
 form.watch_minutes.addEventListener("change", () => save({ watch_minutes: Number(form.watch_minutes.value) }));

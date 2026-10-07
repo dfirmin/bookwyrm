@@ -1,4 +1,5 @@
-"""Text to speech: Kokoro-82M (Apache-2.0) through sherpa-onnx, fully local.
+"""Text to speech, fully local: Kokoro-82M (Apache-2.0) through sherpa-onnx, or any engine in
+``speakers`` (Chatterbox, the natural voice) through the same Pipecat service.
 
 Pipecat splits the model's streaming text into sentences and calls ``run_tts`` once per
 sentence, so Bookwyrm starts talking while the rest of the answer is still being written.
@@ -8,8 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from loguru import logger
 
 import numpy as np
 import onnxruntime as ort
@@ -18,6 +22,9 @@ from pipecat.audio.utils import create_stream_resampler
 from pipecat.frames.frames import ErrorFrame, Frame, TTSAudioRawFrame
 from pipecat.services.settings import TTSSettings
 from pipecat.services.tts_service import TTSService
+
+if TYPE_CHECKING:
+    from .speakers import Speaker
 
 
 def voice_ids(model_dir: Path) -> dict[str, int]:
@@ -80,33 +87,51 @@ def english_voices(ids: dict[str, int]) -> list[dict]:
     return out
 
 
-class KokoroSherpaTTSService(TTSService):
-    def __init__(self, *, kokoro: Kokoro, speed: float = 1.0, spoken_log=None, **kwargs):
+class SpeakerTTSService(TTSService):
+    """Speaks each sentence with ``speaker``. If a natural voice fails mid-call, that sentence (and
+    the rest of the process) switches to Kokoro, from ``fallback``, rather than going quiet."""
+
+    def __init__(self, *, speaker: Speaker, speed: float = 1.0, spoken_log=None,
+                 fallback: Callable[[], Speaker] | None = None, **kwargs):
         super().__init__(
             push_start_frame=True,
             push_stop_frames=True,
-            settings=TTSSettings(model="kokoro-82m-v1.0", voice=kokoro.voice, language="en-us"),
+            settings=TTSSettings(model=speaker.engine, voice=speaker.voice, language="en-us"),
             **kwargs,
         )
-        self._kokoro = kokoro
+        self._speaker = speaker
         self._speed = speed
+        self._fallback = fallback
         self._resampler = create_stream_resampler()
         self._spoken_log = spoken_log
 
     def can_generate_metrics(self) -> bool:
         return True
 
+    async def _speak(self, text: str):
+        try:
+            return await asyncio.to_thread(self._speaker.speak, text, self._speed)
+        except Exception as e:
+            if self._fallback is None or self._speaker.engine == "kokoro":
+                raise
+            logger.exception(f"{self._speaker.engine} failed; switching this call to Kokoro: {e}")
+            self._speaker = await asyncio.to_thread(self._fallback)
+            return await asyncio.to_thread(self._speaker.speak, text, self._speed)
+
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
+        from .speakers import strip_tags
+
         text = text.strip()
-        if not text:
-            return
+        if not strip_tags(text):  # nothing but a [chuckle]: still say it if the engine can
+            if not text or not self._speaker.tags:
+                return
         if self._spoken_log is not None:
-            self._spoken_log.add(text)
+            self._spoken_log.add(strip_tags(text))  # the echo guard compares words, not tags
         try:
             await self.start_tts_usage_metrics(text)
-            audio = await asyncio.to_thread(self._kokoro.generate, text, self._speed)
+            audio = await self._speak(text)
             await self.stop_ttfb_metrics()
-            pcm = (np.clip(np.asarray(audio.samples, dtype=np.float32), -1, 1) * 32767).astype(np.int16).tobytes()
+            pcm = (np.clip(audio.samples, -1, 1) * 32767).astype(np.int16).tobytes()
             pcm = await self._resampler.resample(pcm, audio.sample_rate, self.sample_rate)
             yield TTSAudioRawFrame(audio=pcm, sample_rate=self.sample_rate, num_channels=1, context_id=context_id)
         except Exception as e:  # pragma: no cover - surfaced as an ErrorFrame

@@ -94,7 +94,9 @@ only active targets are offered, and Bookwyrm confirms the repo carries Archivis
 `contracts/target.yaml` before using it, so it can't be pointed at an arbitrary repo by mistake
 (see [ADR 0006](docs/adr/0006-knowledge-repo-from-the-registry.md)). Then it installs everything with a checklist: Hermes Agent, the GitHub MCP server, the
 `bookwyrm` Hermes profile, Hermes' local API, the voice service and its speech models (about
-1 GB, once), and the companion app, which it adds to Applications / the Start menu / your app
+1 GB, once), the most natural voice your computer can run (Chatterbox on Apple Silicon Macs,
+NVIDIA GPUs and fast CPUs, 1 to 3 GB more; otherwise the standard voice, see
+[ADR 0007](docs/adr/0007-natural-voice-tiers.md)), and the companion app, which it adds to Applications / the Start menu / your app
 menu. It fetches Node.js 22 for itself if you don't have it, and keeps Bookwyrm in `~/bookwyrm`
 (`BOOKWYRM_DIR` to change). Your settings go to `~/.bookwyrm/settings.json`; the keys only to the
 profile's own `.env`.
@@ -109,7 +111,12 @@ ANTHROPIC_API_KEY=... GITHUB_PERSONAL_ACCESS_TOKEN=... \
   ./install.sh --yes --name "Dee Firmin" --team "Data Engineering" --repo dfirmin/archivist-knowledge-01
 ./install.sh --yes --only voice,models,app,launcher     # just some steps
 ./install.sh --dry-run                                  # show what it would do
+./install.sh --only natural-voice --voice-engine kokoro # keep the standard voice (no extra download)
 ```
+
+To compare the voices on your machine (speed, memory, and a WAV of each to listen to):
+`voice/.venv/bin/python voice/tests/bench_voices.py`. To have Bookwyrm speak in a voice of your
+choosing, put a 5 to 15 second recording in `~/.bookwyrm/voices/` and pick it in Settings.
 
 `./install.sh --help` lists every option and step. One more thing to do yourself: **protect the
 knowledge repo's `main`** (require a pull request before merging). Bookwyrm's rules say it only

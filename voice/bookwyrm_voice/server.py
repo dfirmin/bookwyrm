@@ -19,8 +19,8 @@ Settings
     GET    /api/settings         the settings the app shows (no secrets)
     PUT    /api/settings         change name, team, voice, voice_speed, calls_you, watch_minutes
     POST   /api/settings/reload  re-read settings.json and the profile .env (after setup ran)
-    GET    /api/voices           Kokoro's English voices
-    POST   /api/voices/preview   {"voice", "speed"} -> a short WAV sample
+    GET    /api/voices           the speaking engines this machine can use, and the current one's voices
+    POST   /api/voices/preview   {"voice", "speed"} -> a short WAV sample in the current engine
     GET    /api/prefs, POST /api/prefs   (older app builds: {"calls_you"})
     GET    /health               is Hermes reachable, are the speech models loaded
 
@@ -30,6 +30,7 @@ Run:  python -m bookwyrm_voice.server
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import io
 import json
 import time
@@ -53,14 +54,17 @@ from pipecat.transports.smallwebrtc.request_handler import (
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
+from . import hardware
 from .config import EDITABLE, Settings, load_settings, save_settings
 from .history import History, context_text
+from .models import download_size, engine_present
 from .pipeline import Engines, build_call, greet
-from .tts import english_voices
+from .speakers import ENGINE_LABELS, KokoroSpeaker
 from .watch import Reason, Watcher, classify
 
 _settings: Settings = load_settings()
-state: dict = {"engines": None, "watcher": None, "loading": True, "error": None, "history": None}
+state: dict = {"engines": None, "watcher": None, "loading": True, "error": None, "history": None,
+               "switching": False}
 webrtc = SmallWebRTCRequestHandler()
 
 
@@ -69,16 +73,50 @@ def cfg() -> Settings:
 
 
 def _reload() -> Settings:
+    """Re-read settings. A change of speaking engine reloads it in the background (that takes a
+    while); /health says "loading" meanwhile, and calls keep using the old voice until it's ready."""
     global _settings
+    old = _settings
     _settings = load_settings()
     engines: Engines | None = state["engines"]
     if engines is not None:
-        engines.settings = _settings
-        try:
-            engines.kokoro.set_voice(_settings.voice)
-        except ValueError as e:
-            logger.warning(str(e))
+        if _settings.voice_engine != old.voice_engine or _settings.natural_voice != old.natural_voice:
+            asyncio.get_running_loop().create_task(_apply(engines, _settings))
+        else:
+            try:
+                engines.apply(_settings)
+            except ValueError as e:
+                logger.warning(str(e))
     return _settings
+
+
+async def _apply(engines: Engines, settings: Settings):
+    state["switching"] = True
+    try:
+        await asyncio.to_thread(engines.apply, settings)
+        logger.info(f"Speaking with {engines.status()}")
+    except Exception as e:  # noqa: BLE001
+        logger.exception(f"Couldn't switch voice: {e}")
+    finally:
+        state["switching"] = False
+
+
+_LIBS = {hardware.TURBO_MLX: "mlx_audio", hardware.TURBO_CUDA: "chatterbox", hardware.NANO_CPU: "chatterbox"}
+
+
+def engine_choices(settings: Settings) -> list[dict]:
+    """Every engine, and whether this machine has what it needs (hardware, libraries, model)."""
+    machine = hardware.detect()
+    out = []
+    for e in hardware.ENGINES:
+        reason = hardware.why_not(e, machine)
+        lib = _LIBS.get(e)
+        if reason is None and lib and importlib.util.find_spec(lib) is None:
+            reason = "not installed (run setup again to add it)"
+        if reason is None and not engine_present(settings.models_dir, e):
+            reason = f"not downloaded ({download_size(settings.models_dir, e) / 1e9:.1f} GB; run setup again)"
+        out.append({"id": e, "label": ENGINE_LABELS[e], "ready": reason is None, "reason": reason or ""})
+    return out
 
 
 def history() -> History:
@@ -90,8 +128,8 @@ def history() -> History:
 async def _load_engines():
     logger.info("Loading speech models (first run downloads ~1 GB from GitHub)…")
     try:
-        state["engines"] = await asyncio.to_thread(Engines, cfg())
-        logger.info(f"Ready. Hermes at {cfg().hermes_url}; voice {cfg().voice}")
+        state["engines"] = engines = await asyncio.to_thread(Engines, cfg())
+        logger.info(f"Ready. Hermes at {cfg().hermes_url}; speaking with {engines.status()}")
     except Exception as e:
         state["error"] = f"{type(e).__name__}: {e}"
         logger.exception("Could not load the speech models")
@@ -362,8 +400,19 @@ async def put_settings(request: Request):
         if k in updates:
             updates[k] = str(updates[k]).strip()[:80]
     engines: Engines | None = state["engines"]
-    if "voice" in updates and engines is not None and updates["voice"] not in engines.kokoro.ids:
-        raise HTTPException(400, f"Unknown voice {updates['voice']!r}")
+    if "voice_engine" in updates:
+        choice = next((c for c in engine_choices(cfg()) if c["id"] == updates["voice_engine"]), None)
+        if choice is None:
+            raise HTTPException(400, f"Unknown speaking engine {updates['voice_engine']!r}")
+        if not choice["ready"]:
+            raise HTTPException(400, f"{choice['label']} isn't available: {choice['reason']}")
+    if engines is not None:
+        speaker = engines.speaker
+        kokoro = isinstance(speaker, KokoroSpeaker)
+        if "voice" in updates and kokoro and not speaker.has_voice(updates["voice"]):
+            raise HTTPException(400, f"Unknown voice {updates['voice']!r}")
+        if "natural_voice" in updates and not kokoro and not speaker.has_voice(updates["natural_voice"]):
+            raise HTTPException(400, f"Unknown voice {updates['natural_voice']!r}")
     save_settings(updates)
     return _reload().public()
 
@@ -375,10 +424,18 @@ async def reload_settings():
 
 @app.get("/api/voices")
 async def voices():
+    """The engines (for the "Voice quality" choice) and the speaking engine's voices. ``setting``
+    names the settings key a voice choice is saved under (Kokoro and Chatterbox keep their own)."""
+    s = cfg()
     engines: Engines | None = state["engines"]
-    if engines is None:
-        return {"voices": [], "current": cfg().voice, "loading": True}
-    return {"voices": english_voices(engines.kokoro.ids), "current": engines.kokoro.voice}
+    choices = await asyncio.to_thread(engine_choices, s)
+    if engines is None or state["switching"]:
+        return {"voices": [], "current": s.voice, "setting": "voice", "loading": True,
+                "engines": choices, "engine": {"engine": s.voice_engine, "wanted": s.voice_engine}}
+    speaker = engines.speaker
+    kokoro = isinstance(speaker, KokoroSpeaker)
+    return {"voices": speaker.voices(), "current": speaker.voice, "setting": "voice" if kokoro else "natural_voice",
+            "engines": choices, "engine": engines.status(), "voices_dir": str(s.voices_dir)}
 
 
 @app.post("/api/voices/preview")
@@ -387,14 +444,18 @@ async def preview(request: Request):
     if engines is None:
         raise HTTPException(503, "Still loading the voices.")
     body = await request.json()
-    voice = body.get("voice") or engines.kokoro.voice
-    if voice not in engines.kokoro.ids:
+    speaker = engines.speaker
+    voice = body.get("voice") or speaker.voice
+    if not speaker.has_voice(voice):
         raise HTTPException(400, f"Unknown voice {voice!r}")
     speed = float(body.get("speed") or cfg().voice_speed)
     first = cfg().first_name
     text = f"Hey{' ' + first if first else ''}! This is how I'd sound. Want to try another one?"
-    audio = await asyncio.to_thread(engines.kokoro.generate, text, speed, voice)
-    pcm = (np.clip(np.asarray(audio.samples, dtype=np.float32), -1, 1) * 32767).astype(np.int16)
+    try:
+        audio = await asyncio.to_thread(speaker.speak, text, speed, voice)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    pcm = (np.clip(audio.samples, -1, 1) * 32767).astype(np.int16)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(audio.sample_rate)
@@ -451,7 +512,8 @@ async def health():
         pass
     return {"ok": hermes and state["engines"] is not None, "hermes": hermes,
             "models": state["engines"] is not None, "loading": state["loading"],
-            "error": state["error"], "voice": cfg().voice}
+            "error": state["error"], "voice": cfg().voice, "switching": state["switching"],
+            "speaking": state["engines"].status() if state["engines"] is not None else None}
 
 
 def main():

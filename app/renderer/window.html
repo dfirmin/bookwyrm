@@ -175,6 +175,10 @@
 
           <h2>Voice</h2>
           <div class="group">
+            <label class="row">
+              <span>Voice quality<small id="engine-note"></small></span>
+              <select name="voice_engine" id="voice-engine"></select>
+            </label>
             <div class="row">
               <span>Voice</span>
               <div class="control">
@@ -187,6 +191,7 @@
               <div class="control slider"><small>Slower</small><input type="range" name="voice_speed" min="0.8" max="1.25" step="0.05" /><small>Faster</small></div>
             </label>
           </div>
+          <p class="hint" id="voice-hint">Natural voices sound like a person on the phone but need a recent computer; Standard runs anywhere. Setup picks the best one this computer can run.</p>
 
           <h2>Calls from Bookwyrm</h2>
           <div class="group">

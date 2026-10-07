@@ -354,3 +354,35 @@ test('profile step refuses a repo Archivist doesn\'t run on, and writes nothing'
   });
   assert.equal(fs.readFileSync(path.join(dir, 'SOUL.md'), 'utf8'), before);
 }));
+
+test('natural voice: --voice-engine, and the step only reinstalls when something changed', () => {
+  assert.equal(state.parseArgs(['--voice-engine', 'chatterbox-nano']).voiceEngine, 'chatterbox-nano');
+  assert.equal(state.parseArgs(['--voice-engine=Kokoro']).voiceEngine, 'kokoro');
+  assert.throws(() => state.parseArgs(['--voice-engine', 'elevenlabs']), /--voice-engine is one of auto, kokoro/);
+  assert.ok(steps.STEP_IDS.indexOf('natural-voice') > steps.STEP_IDS.indexOf('models'));
+  assert.ok(steps.STEP_IDS.indexOf('natural-voice') < steps.STEP_IDS.indexOf('settings'));
+
+  const step = steps.STEPS.find((s) => s.id === 'natural-voice');
+  const ctx = (voiceEngine) => ({ opts: { voiceEngine } });
+  assert.equal(step.detect(ctx('kokoro')).done, true);         // asked for Standard: nothing to do
+  assert.equal(step.detect(ctx()).done, false);                // never run
+  const stamp = path.join(sys.paths.voice, '.venv', '.bookwyrm-natural-voice');
+  const hadVenv = fs.existsSync(path.dirname(stamp));
+  fs.mkdirSync(path.dirname(stamp), { recursive: true });
+  const hash = sys.sha256(sys.readText(path.join(sys.paths.voice, 'pyproject.toml')));
+  const model = path.join(sys.paths.models, 'chatterbox-nano', '.bookwyrm-complete');
+  try {
+    fs.writeFileSync(stamp, `${hash} chatterbox-nano\n`);
+    assert.equal(step.detect(ctx()).done, false);              // stamped, but the model isn't there
+    fs.mkdirSync(path.dirname(model), { recursive: true });
+    fs.writeFileSync(model, 'x');
+    assert.equal(step.detect(ctx()).done, true);
+    assert.equal(step.detect(ctx('auto')).done, true);
+    assert.equal(step.detect(ctx('chatterbox-turbo')).done, false);  // asked for a different one
+    fs.writeFileSync(stamp, `old-hash chatterbox-nano\n`);
+    assert.equal(step.detect(ctx()).done, false);              // pyproject changed: reinstall
+  } finally {
+    fs.rmSync(stamp, { force: true });
+    if (!hadVenv) fs.rmSync(path.dirname(stamp), { recursive: true, force: true });
+  }
+});

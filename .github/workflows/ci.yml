@@ -88,13 +88,13 @@ jobs:
           (cd setup && npm test)
           (cd app && node --test tests/launcher.test.js)
 
-      - name: Voice tests (echo guard, watcher, history, speech round trip)
+      - name: Voice tests (echo guard, watcher, history, workspace, speech round trip)
         shell: bash
         working-directory: voice
         run: |
           py=.venv/bin/python; [ -x "$py" ] || py=.venv/Scripts/python.exe
           set -o pipefail
-          { "$py" tests/test_units.py && "$py" tests/test_engines.py; } 2>&1 | tee "$RUNNER_TEMP/voice-tests.log"
+          { "$py" tests/test_units.py && "$py" tests/test_workspace.py && "$py" tests/test_engines.py; } 2>&1 | tee "$RUNNER_TEMP/voice-tests.log"
 
       - name: The voice service starts and loads its voice
         shell: bash

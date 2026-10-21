@@ -3,28 +3,33 @@
 The librarian for [Archivist](https://github.com/dfirmin/archivist) knowledge repos.
 
 Archivist turns messy documents into a curated knowledge bundle in a git repo. Bookwyrm is the
-assistant the people who own that bundle talk to — repo owners, SMEs and product owners. It
-answers questions from the bundle, takes corrections, helps resolve open gaps and quarantined
-drafts, and remembers what it was told so the next person who asks gets the benefit.
+assistant the people who own that bundle talk to — repo owners, SMEs and product owners — so they
+can keep it right without ever opening GitHub. It answers questions, makes any change they ask for
+(one word, a rewrite, a new document, or the same change across fifty documents), works through
+gaps and quarantine with them, and remembers what it was told.
 
-Bookwyrm is a **client of Archivist, not part of it.** It never runs the engine and never
-writes engine-owned fields. Everything it changes goes to the knowledge repo as a pull request
-that a person merges.
+Archivist is for big batches it works through on its own. Bookwyrm is for everything a person
+wants to do themselves, and it never gates them: it suggests (a contract when a pattern repeats, a
+source note so Archivist can cite something) and then does what they choose. See
+[ADR 0008](docs/adr/0008-full-authoring-preview-approval.md).
 
-## What it does (v0)
+## What it does
 
 | Ask | What Bookwyrm does |
 |---|---|
 | "What's our policy on X?" | Answers from `index.md` → the concept → its cited sources, and says when a gap is open |
-| "That value is wrong, it's 90 days" | Small correction: edits the concept, opens a PR citing who said so |
-| "Here's the answer to that gap" | Records the SME's statement as an attributed source document in `sources/inbox/`; the next Archivist run enriches the concept and re-judges the gap |
-| "What's stuck in quarantine?" | Reads `okfx_quarantine.needs`, gets the missing contract value from the owner, opens the contract PR, then the requeue PR |
-| "Here's the transcript from today's call" | Drops it in `sources/inbox/`; Archivist's extractor (ADR 0006) splits it by topic |
+| "That value is wrong, it's 90 days" | Edits the concept; you see the change highlighted in the preview and approve it |
+| "Replace PHMS with KMS in everything under claims" | Finds every document, edits them all; you step through them one at a time, or approve all |
+| "Add a Data Quality section to these four subject areas" | Writes them, and asks once whether a contract should make Archivist do the same |
+| "Here's the answer to that gap" | Writes it into the concept and links the gap issue, which closes when the change merges |
+| "What's stuck in quarantine?" | Explains `okfx_quarantine.needs`; fixes the contract and requeues, places it by hand, or drops it, as you choose |
+| "Here's the transcript from today's call" | Drops it in `sources/inbox/` for Archivist's next run, or puts what matters straight into the concepts |
 
-Why SME answers go in as sources rather than straight into the concept: Archivist's rule is
-that a concept body restates its sources and adds nothing to them. A source note keeps that
-true, keeps who-said-what auditable, and lets the engine's verifier, gap and scoring stages run
-on the new content. See [ADR 0002](docs/adr/0002-sme-statements-enter-as-sources.md).
+**Everything is approved by a person, in the app.** Bookwyrm edits a copy of the repo on your
+computer, and each edit appears beside the conversation as the rendered document, with what changed
+highlighted. Approve it (or approve all) and Bookwyrm opens the pull request and merges it for you,
+closing any gap it resolves. Concepts you approve carry a `verified` stamp with your name, so
+Archivist knows a person stood behind them.
 
 **Call it, or message it.** A small robot sits at the edge of your screen, quietly, in your
 system's colours. Drag it wherever it's out of the way. Click it for a menu: **Call Bookwyrm**
@@ -41,13 +46,15 @@ and [ADR 0004](docs/adr/0004-companion-v2-window-installer.md).
 </p>
 
 **Open Bookwyrm** for the full window: every call and conversation (pick one up again by text
-or by voice), the **Library** of what needs you in the repo (quarantined drafts, gaps, open pull
-requests, each with *Ask Bookwyrm*), and **Settings** (your name and team, the repo, keys, voice,
-calls, open at login). Quit any time from the robot's menu or the menu-bar / tray icon.
+or by voice) with the document you're working on beside it; **Knowledge**, the repo's documents
+to browse, read rendered and edit yourself; **Gaps**, yours first (by the labels you choose), each
+with *Work on it*, plus quarantine and open pull requests; and **Settings** (your name and team, the
+repo, keys, voice, calls, gap labels, open at login). The robot shows how many of your gaps are
+open. Quit any time from the robot's menu or the menu-bar / tray icon.
 
 <p>
-  <img src="docs/img/window-library.png" alt="The Library: quarantine, gaps and pull requests" width="49%">
-  <img src="docs/img/window-chat-dark.png" alt="A call, saved in the conversation history (dark mode)" width="49%">
+  <img src="docs/img/window-review.png" alt="Bookwyrm's edit in the preview: changed words highlighted, Approve or Discard" width="49%">
+  <img src="docs/img/window-library.png" alt="Gaps: yours first, each with Work on it" width="49%">
 </p>
 
 Not yet: the Teams bot, a meeting bot, Postgres memory, and dispatching Archivist runs. Each can
@@ -59,10 +66,15 @@ attach later without changing the core (see
 - **Runtime:** [Hermes Agent](https://github.com/NousResearch/hermes-agent), as a Hermes
   *profile* named `bookwyrm`. Model-agnostic: direct Anthropic, or any OpenAI-compatible
   endpoint such as a LiteLLM gateway.
-- **Tools:** the [GitHub MCP server](https://github.com/github/github-mcp-server), limited to
-  reading the repo, branches, file writes, pull requests and issues. No terminal, no local file
-  access, no web.
-- **Behaviour:** `profile/SOUL.md` (who Bookwyrm is and its hard rules) and the skills in
+- **Tools:** Bookwyrm's own workspace server (`voice/bookwyrm_voice/workspace_mcp.py`: list, read,
+  search, write, edit, move and delete in a local copy of the repo, each edit going to the
+  person's preview), and the [GitHub MCP server](https://github.com/github/github-mcp-server) for
+  issues and reading pull requests. The agent has no way to publish: approving in the app does
+  that. No terminal, no other file access, no web.
+- **The workspace:** the app's local service keeps the copy in sync over GitHub's REST API (no git
+  needed), holds each conversation's unpublished changes, merges other people's edits three ways,
+  and publishes an approved change as one pull request, merged.
+- **Behaviour:** `profile/SOUL.md` (who Bookwyrm is and its one principle) and the skills in
   `skills/` (one per job above). Shipped skills are read-only to the agent; skills it learns
   on its own land in the profile and are promoted here by pull request.
 - **Memory:** Hermes' built-in memory and SQLite session store, per profile.
@@ -140,7 +152,8 @@ Switch any time in the app under Settings → Model, or with
 ```
 profile/                 Hermes profile template: config.yaml, SOUL.md, .env.example
 skills/                  Bookwyrm's skills (loaded read-only via skills.external_dirs)
-voice/                   The call service: Pipecat pipeline, Hermes adapter, local speech models
+voice/                   The app's local service: calls (Pipecat, local speech models), the Hermes
+                         adapter, and the workspace (repo copy, changes, publishing; workspace*.py)
 voice/prompts/           How Bookwyrm talks on a call
 app/                     The desktop app (Electron): the robot, its call card, the Bookwyrm window
 install.sh, install.ps1  One-line installers: get Node.js and the source, start the wizard

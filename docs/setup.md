@@ -20,6 +20,10 @@ You need two keys. Setup asks for both and checks them before going on.
     Nothing else.
 
   This token is the real limit on what Bookwyrm can touch.
+- **Merging.** When you approve a change in Bookwyrm, it opens a pull request and merges it for
+  you. If the knowledge repo's `main` is protected (it should be), add the people who approve in
+  Bookwyrm to the protection's **bypass list**; otherwise the pull request waits for a reviewer
+  (Bookwyrm tells you when that happens).
 
 ## Install
 
@@ -72,7 +76,7 @@ The robot sits at the bottom right of your screen and stays on top of other wind
     like: it stops and listens.
   - **Send a message.** Type instead of talking. Replies appear on the card.
   - **Open Bookwyrm.** The full window (below).
-  - **Library.** What needs you in the repo.
+  - **Library.** What needs you in the repo (the window's Gaps page).
   - **Let Bookwyrm call me.** See below.
   - **Hide robot.** Bookwyrm keeps running (it can still call you). To bring the robot back, press
     **⌃⌥B** (Ctrl+Alt+B on Windows), open Bookwyrm again from Spotlight, Applications or the
@@ -98,8 +102,21 @@ an issue.
 - **Conversations.** Every call and typed chat, newest first, with search. Double-click one to
   rename it; hover over it to delete it. Open one and type to carry on. **Call** carries on by
   voice, and Bookwyrm remembers what you were discussing.
-- **Library.** Drafts in quarantine, open gaps, and open pull requests (Bookwyrm's, Archivist's
-  and other people's). **Ask Bookwyrm** starts a conversation about any of them.
+- **The document beside the conversation.** When Bookwyrm changes a document (by text or on a
+  call), it opens here rendered, with what changed highlighted: new words in green, removed ones
+  struck through. **Approve** or **Discard** each one; for a change across many documents, step
+  through them (**‹ 3 of 12 ›**) or **Approve all**. When nothing is left to look at, Bookwyrm opens
+  the pull request and merges it, and closes any gap it resolved. Nothing reaches GitHub until you
+  approve it. The **edits to review** button in the toolbar takes you back to anything waiting.
+- **Knowledge.** The repo's documents. Open one to read it rendered; **Ask Bookwyrm** talks about
+  it ("fix this section"); **Edit** lets you change it yourself, like a word processor. **Save**
+  publishes it straight away, and Bookwyrm says if anything about it is worth a second look.
+- **Gaps.** Open gaps, yours first: pick the labels that mean "yours" (your team, your subject
+  area) in Settings. **Work on it** opens the document and starts the conversation; **⋯** comments
+  on the issue, marks it not applicable or snoozes it for a week. Quarantined drafts and open pull
+  requests are below. The robot shows how many of your gaps are open.
+- **Up to date / Synced 2 min ago** in the toolbar: Bookwyrm keeps a copy of the repo on this
+  computer and checks GitHub every few minutes, and right before every edit. Click it to check now.
 - **Settings:**
   - your name and team;
   - how Bookwyrm reaches Claude: Anthropic directly or your company's gateway (**Save and check**
@@ -108,6 +125,7 @@ an issue.
     re-runs the relevant setup steps for you);
   - Bookwyrm's voice (press **Play** to hear one) and its speaking speed;
   - calls from Bookwyrm;
+  - your gap labels, and how often to check GitHub for changes;
   - opening at login, and showing the robot.
 
 ### Letting Bookwyrm call you
@@ -137,11 +155,12 @@ The card and Settings → *Voice service* say what's wrong.
 |---|---|
 | "Bookwyrm is waking up" for more than a minute | The first start after setup loads the speech models. If it never finishes, check the log at `~/.bookwyrm/voice.log` (Windows: `%USERPROFILE%\.bookwyrm\voice.log`), then Settings → Voice service → **Restart** |
 | "Bookwyrm's brain (Hermes) isn't running" | In Terminal or PowerShell: `hermes gateway restart` |
-| "I can't reach the repo", or the Library shows a GitHub error | The token has expired or doesn't cover the repo. Settings → GitHub token → **Replace…** |
+| "I can't reach the repo", the toolbar says *Can't reach GitHub*, or Gaps shows a GitHub error | The token has expired or doesn't cover the repo. Settings → GitHub token → **Replace…** |
 | Bookwyrm can't answer anything | Settings → Model: check the Anthropic key, or the gateway address, model name and key. **Save and check** tests them |
+| An approved change stays an open pull request | `main` is protected and you aren't on its bypass list. Ask a repo admin to add you, or a reviewer to merge it |
 | My knowledge repo isn't in the list | Bookwyrm only looks after repos in Archivist's registry. Ask the Archivist owners to add it to `targets.yaml` (a pull request), then pick it in Settings → Knowledge repo |
 | A repo in the list says your token can't reach it | Make a fine-grained GitHub token that includes that repo, and save it in Settings → GitHub token |
-| The Library says the repo is no longer an active target | It's been retired in the registry. Choose another in Settings → Knowledge repo |
+| Gaps says the repo is no longer an active target | It's been retired in the registry. Choose another in Settings → Knowledge repo |
 | Using a gateway: answers stop off the company network | The gateway is only reachable on the network or VPN. Speech still works; thinking needs the gateway |
 | "Voice isn't set up on this computer" | Run the install line again |
 | No sound from Bookwyrm | Check the computer's output device. The captions on the card show what it's saying |

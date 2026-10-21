@@ -87,6 +87,17 @@ test('profile config: Windows paths stay valid YAML (JSON-escaped) and CRLF is n
   assert.ok(!out.includes('\r'));
 });
 
+test('profile config: the workspace tools run with the voice service\'s Python', () => {
+  const out = steps.renderProfileFile(config, { skillsDir: '/r/skills', repo: 'o/n', mcpBin: '', isConfig: true, voicePython: 'C:\\b\\voice\\.venv\\Scripts\\python.exe' });
+  assert.ok(out.includes('  workspace:\n    command: "C:\\\\b\\\\voice\\\\.venv\\\\Scripts\\\\python.exe"\n    args: ["-m", "bookwyrm_voice.workspace_mcp"]'));
+  assert.ok(!out.includes('__BOOKWYRM_VOICE_PYTHON__'));
+  assert.ok(out.includes('cli: [mcp-workspace, mcp-github,'));
+  // The agent can't write to GitHub directly: every change goes through the person's preview.
+  for (const tool of ['create_or_update_file', 'push_files', 'create_branch', 'create_pull_request', 'merge_pull_request', 'delete_file\n        # pull']) {
+    assert.ok(!out.includes(`- ${tool}`), tool);
+  }
+});
+
 test('profile config: without a binary the Docker launch stays', () => {
   const out = steps.renderProfileFile(config, { skillsDir: '/r/skills', repo: 'o/n', mcpBin: '', isConfig: true });
   assert.ok(out.includes('command: "docker"'));

@@ -1,6 +1,9 @@
-// The Bookwyrm window: conversations (typed and called), the library, settings.
+// The Bookwyrm window: conversations (typed and called), the knowledge repo's documents, gaps,
+// settings, and beside them the document pane (doc.js): documents rendered, Bookwyrm's edits to
+// review, the person's own edits.
 import DOMPurify from "dompurify";
 import { marked } from "marked";
+import { closeDoc, docContext, handleEvent, initDoc, isEditing, openDocument, openPath, showPreview } from "./doc.js";
 import { applyOs } from "./os.js";
 import "./window.css";
 
@@ -40,15 +43,17 @@ const ICON = {
 function setView(next, opts = {}) {
   view = next;
   body.dataset.view = next;
-  for (const v of ["chat", "library", "settings"]) $(`${v}-view`).hidden = v !== next;
+  for (const v of ["chat", "knowledge", "library", "settings"]) $(`${v}-view`).hidden = v !== next;
   if (next === "chat" && opts.conversation) conv = opts.conversation;
   if (next === "chat" && opts.fresh) conv = null;
   $("nav-new").setAttribute("aria-current", next === "chat" && !conv ? "page" : "false");
+  $("nav-knowledge").setAttribute("aria-current", next === "knowledge" ? "page" : "false");
   $("nav-library").setAttribute("aria-current", next === "library" ? "page" : "false");
   $("nav-settings").setAttribute("aria-current", next === "settings" ? "page" : "false");
   $("call-button").hidden = next !== "chat";
   $("refresh-library").hidden = next !== "library";
-  if (next === "library") { $("view-title").textContent = "Library"; loadLibrary(); }
+  if (next === "knowledge") { $("view-title").textContent = "Knowledge"; loadTree(); }
+  if (next === "library") { $("view-title").textContent = "Gaps"; loadLibrary(); }
   if (next === "settings") { $("view-title").textContent = "Settings"; loadSettings(); }
   if (next === "chat") {
     if (opts.conversation) openConversation(opts.conversation);
@@ -59,8 +64,13 @@ function setView(next, opts = {}) {
 }
 
 function route(opts = {}) {
-  if (opts.view === "library" || opts.view === "settings") setView(opts.view);
-  else setView("chat", { conversation: opts.conversation, fresh: !opts.conversation && opts.view === "new" });
+  if (["library", "settings", "knowledge"].includes(opts.view)) setView(opts.view);
+  else if (opts.view === "preview" && (opts.change || opts.path)) {
+    // Bookwyrm edited or pointed at something (often on a call): the conversation, with it beside it.
+    if (view !== "chat" && view !== "knowledge") setView("chat", { conversation: conv || undefined });
+    if (opts.change) showPreview(opts.change, opts.path || null);
+    else openDocument(opts.path);
+  } else setView("chat", { conversation: opts.conversation, fresh: !opts.conversation && opts.view === "new" });
 }
 
 // ---------------------------------------------------------------- history (sidebar)
@@ -171,7 +181,8 @@ async function openConversation(id) {
     for (const m of c.messages) {
       if (m.via === "voice" && lastVia !== "voice") divider(m.at);
       lastVia = m.via;
-      addMessage(m.role, m.text);
+      if (m.via === "event") eventNote(m.text);
+      else addMessage(m.role, m.text);
     }
     scrollDown();
   } catch {
@@ -187,6 +198,15 @@ function divider(at) {
   li.innerHTML = ICON.call;
   li.append(` Call, ${new Date(at * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`);
   $("messages").append(li);
+}
+
+/** A line in the conversation for something that happened (an approved change published). */
+function eventNote(text) {
+  const li = document.createElement("li");
+  li.className = "event-note";
+  li.innerHTML = md(text);
+  $("messages").append(li);
+  body.dataset.chat = "";
 }
 
 function addMessage(role, text) {
@@ -215,7 +235,7 @@ async function send(text) {
   let frame = 0;
   const paint = () => { frame = 0; li.innerHTML = md(reply) || '<span class="working">Thinking</span>'; scrollDown(); };
   try {
-    const r = await fetch(`${voiceUrl}/api/chat`, json("POST", { text, session_id: conv, surface: "window" }));
+    const r = await fetch(`${voiceUrl}/api/chat`, json("POST", { text, session_id: conv, surface: "window", ...docContext() }));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const reader = r.body.getReader();
     const dec = new TextDecoder();
@@ -270,7 +290,86 @@ bw.onCallState(async (on) => {
   }
 });
 
-// ---------------------------------------------------------------- library
+// ---------------------------------------------------------------- knowledge: the repo's documents
+
+let tree = null;
+const openDirs = new Set(["knowledge"]);
+
+async function loadTree() {
+  const box = $("tree");
+  if (!tree) box.innerHTML = '<li class="tree-note">Reading the repo…</li>';
+  try {
+    tree = await api("/api/ws/tree");
+  } catch (e) {
+    box.replaceChildren(Object.assign(document.createElement("li"), { className: "tree-note problem-text", textContent: e.message }));
+    return;
+  }
+  renderTree();
+}
+
+function renderTree() {
+  const box = $("tree");
+  const q = $("tree-filter").value.trim().toLowerCase();
+  const current = openPath();
+  const walk = (nodes, depth) => {
+    const out = [];
+    for (const n of nodes) {
+      if (n.dir) {
+        const kids = walk(n.children, depth + 1);
+        if (q && !kids.length) continue;
+        const open = q ? true : openDirs.has(n.path);
+        const li = document.createElement("li");
+        li.role = "treeitem";
+        li.setAttribute("aria-expanded", String(open));
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "tree-row dir";
+        row.style.paddingLeft = `${8 + depth * 14}px`;
+        row.innerHTML = '<svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="M8 5l5 5-5 5"/></svg><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5a1.5 1.5 0 0 1 1.5-1.5h4l1.5 2h6.5a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z"/></svg>';
+        row.append(n.name);
+        row.addEventListener("click", () => { if (openDirs.has(n.path)) openDirs.delete(n.path); else openDirs.add(n.path); renderTree(); });
+        li.append(row);
+        if (open) {
+          const ul = document.createElement("ul");
+          ul.role = "group";
+          ul.append(...kids);
+          li.append(ul);
+        }
+        out.push(li);
+      } else {
+        if (q && !n.path.toLowerCase().includes(q)) continue;
+        const li = document.createElement("li");
+        li.role = "treeitem";
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = `tree-row${n.path === current ? " current" : ""}`;
+        row.style.paddingLeft = `${22 + depth * 14}px`;
+        row.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h6.5L15.5 6.5v10a1 1 0 0 1-1 1h-9.5a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M11 2.5V7h4.5"/></svg>';
+        row.append(n.name.replace(/\.md$/, ""));
+        if (n.mark) { const m = document.createElement("span"); m.className = `mark ${n.mark}`; m.textContent = n.mark; row.append(m); }
+        row.title = n.path;
+        row.addEventListener("click", async () => { await openDocument(n.path); renderTree(); });
+        li.append(row);
+        out.push(li);
+      }
+    }
+    return out;
+  };
+  const items = walk(tree?.tree || [], 0);
+  box.replaceChildren(...(items.length ? items : [Object.assign(document.createElement("li"), { className: "tree-note", textContent: q ? "No documents match." : "The repo is empty." })]));
+}
+$("tree-filter").addEventListener("input", renderTree);
+
+/** Keep the conversation's attention on a document: open the chat beside it. */
+function askAbout(path, text = null) {
+  if (view !== "chat") setView("chat", { conversation: conv || undefined });
+  if (text) { send(text); return; }
+  input.value = input.value || "";
+  input.placeholder = `Ask about ${path.split("/").pop().replace(/\.md$/, "")}, or say what to change`;
+  input.focus();
+}
+
+// ---------------------------------------------------------------- gaps: what needs the person
 
 const ago = (iso) => {
   if (!iso) return "";
@@ -302,6 +401,16 @@ function section(title, items, empty, row) {
   return frag;
 }
 
+function ghLink(it) {
+  const gh = document.createElement("a");
+  gh.className = "gh";
+  gh.href = it.url;
+  gh.title = "Open on GitHub";
+  gh.setAttribute("aria-label", `Open #${it.number} on GitHub`);
+  gh.innerHTML = ICON.github;
+  return gh;
+}
+
 function itemRow(it, meta, prompt, tag) {
   const li = document.createElement("li");
   li.className = "item";
@@ -319,21 +428,82 @@ function itemRow(it, meta, prompt, tag) {
   ask.className = "button small";
   ask.textContent = "Ask Bookwyrm";
   ask.addEventListener("click", () => { setView("chat", { fresh: true }); send(prompt); });
-  const gh = document.createElement("a");
-  gh.className = "gh";
-  gh.href = it.url;
-  gh.title = "Open on GitHub";
-  gh.setAttribute("aria-label", `Open #${it.number} on GitHub`);
-  gh.innerHTML = ICON.github;
-  li.append(ask, gh);
+  li.append(ask, ghLink(it));
   return li;
 }
 
-async function loadLibrary() {
+/** One gap: what's missing in which document, and what the person can do about it here. */
+function gapRow(g) {
+  const li = document.createElement("li");
+  li.className = `item gap${g.snoozed_until ? " snoozed" : ""}`;
+  const what = document.createElement("div");
+  what.className = "what";
+  const b = document.createElement("b");
+  b.textContent = g.concept_title;
+  const small = document.createElement("small");
+  small.textContent = [g.kind && `${g.kind[0].toUpperCase()}${g.kind.slice(1)}`, g.team && `${g.team} team`, `#${g.number}`, `opened ${ago(g.created)}`,
+    g.snoozed_until && `snoozed until ${new Date(g.snoozed_until * 1000).toLocaleDateString([], { month: "short", day: "numeric" })}`].filter(Boolean).join(" · ");
+  what.append(b, small);
+  if (g.detail) { const d = document.createElement("p"); d.className = "detail"; d.textContent = g.detail; what.append(d); }
+  const work = document.createElement("button");
+  work.type = "button";
+  work.className = "button small primary";
+  work.textContent = "Work on it";
+  work.addEventListener("click", async () => {
+    setView("chat", { fresh: true });
+    if (g.concept) openDocument(g.concept, { review: false });
+    send(`Help me resolve gap #${g.number}, "${g.title}"${g.concept ? ` in ${g.concept}` : ""}. What's missing, and what do you need from me?`);
+  });
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "icon-button more";
+  more.setAttribute("aria-label", `More for #${g.number}`);
+  more.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle class="fill" cx="5" cy="10" r="1.3"/><circle class="fill" cx="10" cy="10" r="1.3"/><circle class="fill" cx="15" cy="10" r="1.3"/></svg>';
+  more.addEventListener("click", () => gapMenu(g, li));
+  li.append(what, work, more, ghLink(g));
+  return li;
+}
+
+/** Comment, not applicable, snooze: inline, under the gap. */
+function gapMenu(g, li) {
+  const open = li.querySelector(".gap-actions");
+  if (open) { open.remove(); return; }
+  const box = document.createElement("div");
+  box.className = "gap-actions";
+  const text = document.createElement("textarea");
+  text.rows = 2;
+  text.placeholder = "A comment for the issue, or why this isn't a gap";
+  const row = document.createElement("div");
+  const act = (label, fn, cls = "button small") => { const b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = label; b.addEventListener("click", fn); return b; };
+  const done = async (p, msg) => {
+    for (const x of row.querySelectorAll("button")) x.disabled = true;
+    try { await p; toast(msg); loadLibrary(true); } catch (e) { toast(e.message); for (const x of row.querySelectorAll("button")) x.disabled = false; }
+  };
+  row.append(
+    act("Comment", () => text.value.trim() ? done(api(`/api/gaps/${g.number}/comment`, json("POST", { text: text.value })), `Commented on #${g.number}`) : text.focus()),
+    act("Not applicable", () => done(api(`/api/gaps/${g.number}/not-applicable`, json("POST", { reason: text.value })), `Closed #${g.number} as not applicable`)),
+    g.snoozed_until
+      ? act("Unsnooze", () => done(api(`/api/gaps/${g.number}/snooze`, json("POST", { days: 0 })), `#${g.number} is back`))
+      : act("Snooze a week", () => done(api(`/api/gaps/${g.number}/snooze`, json("POST", { days: 7 })), `Snoozed #${g.number} for a week`)),
+  );
+  box.append(text, row);
+  li.append(box);
+  text.focus();
+}
+
+let gapScope = "mine";
+let gapData = null;
+
+async function loadLibrary(refresh = false) {
   const out = $("library-body");
   $("library-lede").textContent = "Checking the repo…";
   let d;
-  try { d = await api("/api/library"); } catch (e) { d = { error: `Couldn't reach Bookwyrm's voice service (${e.message}).` }; }
+  let lib;
+  try {
+    [d, lib] = await Promise.all([api(`/api/gaps${refresh ? "?refresh=true" : ""}`), api("/api/library").catch(() => ({ pulls: [] }))]);
+  } catch (e) {
+    d = { error: e.message };
+  }
   out.replaceChildren();
   bw.targets().then((t) => {
     if (!t?.current || t.current.ok || view !== "library") return;
@@ -350,44 +520,67 @@ async function loadLibrary() {
   }).catch(() => {});
   if (d.error) {
     $("library-lede").textContent = "";
+    $("gap-filter").hidden = true;
     const p = document.createElement("p");
     p.className = "problem";
     p.textContent = d.error;
     out.append(p);
     return;
   }
+  gapData = { ...d, pulls: lib.pulls || [] };
+  // The label choice lists every label on a gap.
+  const sel = $("gap-label");
+  const keep = sel.value;
+  sel.replaceChildren(new Option("Any label", ""), ...d.labels.map((l) => new Option(l, l)));
+  sel.value = d.labels.includes(keep) ? keep : "";
+  renderGaps();
+}
+
+function renderGaps() {
+  const d = gapData;
+  if (!d) return;
+  const out = $("library-body");
+  out.querySelectorAll(":scope > :not(.banner)").forEach((n) => n.remove());
+  $("gap-filter").hidden = false;
+  const mine = d.mine_labels.length > 0;
+  for (const b of document.querySelectorAll("[data-scope]")) b.setAttribute("aria-checked", String(b.dataset.scope === gapScope));
+  const label = $("gap-label").value;
+  const showSnoozed = $("gap-snoozed").checked;
+  const shown = d.gaps.filter((g) => (gapScope === "all" || !mine || g.mine) && (!label || g.labels.includes(label)) && (showSnoozed || !g.snoozed_until));
   const lede = $("library-lede");
-  lede.replaceChildren("What needs you in ");
-  const a = document.createElement("a");
-  a.href = d.url; a.textContent = d.repo; a.target = "_blank";
-  lede.append(a, ". Ask Bookwyrm about any of these and it will work through it with you.");
-  const draft = (t) => t.replace(/^Quarantined:\s*/, "");
-  // Archivist titles gaps "[team] Concept — kind"; show the concept, with team and kind as detail.
-  const gap = (t) => {
-    const m = /^(?:\[([^\]]+)\]\s*)?(.*?)\s+—\s+([a-z][a-z0-9_]*)$/.exec(t);
-    return m ? { concept: m[2], team: m[1], kind: m[3].replace(/_/g, " ") } : { concept: t };
-  };
+  lede.replaceChildren();
+  if (gapScope === "mine" && !mine) {
+    lede.append("Showing every gap. ");
+    const a = document.createElement("a");
+    a.href = "#";
+    a.textContent = "Choose your labels";
+    a.addEventListener("click", (e) => { e.preventDefault(); setView("settings"); setTimeout(() => $("gap-labels").scrollIntoView({ block: "center" }), 400); });
+    lede.append(a, " to see only yours.");
+  } else {
+    lede.append(gapScope === "mine" ? `Gaps labelled ${d.mine_labels.join(", ")}. ` : "Every open gap. ",
+      "Work on one and Bookwyrm opens the document and takes you through it.");
+  }
+  const hidden = d.gaps.length - shown.length;
   out.append(
-    section("In quarantine", d.quarantine, "Nothing in quarantine.", (it) => itemRow({ ...it, title: draft(it.title) },
+    section("Gaps", shown, hidden ? `Nothing here. ${hidden} other gap${hidden > 1 ? "s are" : " is"} hidden by the filter.` : "No open gaps.", gapRow),
+    section("In quarantine", d.quarantine, "Nothing in quarantine.", (it) => itemRow({ ...it, title: it.title.replace(/^Quarantined:\s*/, "") },
       `#${it.number}, quarantined ${ago(it.created)}`,
-      `Let's sort out the quarantined draft ${draft(it.title)} (issue #${it.number}). Why is it there, and what are my options?`)),
-    section("Gaps", d.gaps, "No open gaps.", (it) => {
-      const g = gap(it.title);
-      const meta = [`#${it.number}`, g.kind && `${g.kind[0].toUpperCase()}${g.kind.slice(1)}`, g.team && `${g.team} team`, `opened ${ago(it.created)}`].filter(Boolean).join(", ");
-      return itemRow({ ...it, title: g.concept }, meta,
-        `Help me resolve the gap in issue #${it.number}: "${it.title}". What's missing, and what do you need from me?`);
-    }),
+      `Let's sort out the quarantined draft ${it.title.replace(/^Quarantined:\s*/, "")} (issue #${it.number}). Why is it there, and what are my options?`)),
     section("Pull requests", d.pulls, "No open pull requests.", (it) => itemRow(it, `#${it.number}, ${it.branch}`,
       `Walk me through pull request #${it.number}, "${it.title}". What does it change, and is it ready to merge?`, it.by)),
   );
-  setLibraryCount(d.quarantine.length + d.gaps.length);
+  setLibraryCount(d.gaps.filter((g) => (!mine || g.mine) && !g.snoozed_until).length);
 }
+
+for (const b of document.querySelectorAll("[data-scope]")) b.addEventListener("click", () => { gapScope = b.dataset.scope; renderGaps(); });
+$("gap-label").addEventListener("change", renderGaps);
+$("gap-snoozed").addEventListener("change", renderGaps);
 
 function setLibraryCount(n) {
   $("library-count").textContent = String(n);
   $("library-count").hidden = !n;
 }
-$("refresh-library").addEventListener("click", loadLibrary);
+$("refresh-library").addEventListener("click", () => loadLibrary(true));
 
 // ---------------------------------------------------------------- settings
 
@@ -424,6 +617,9 @@ async function loadSettings() {
   form.calls_you.checked = settings.calls_you;
   form.watch_minutes.value = String(Math.round(settings.watch_minutes));
   if (!form.watch_minutes.value) form.watch_minutes.value = "5";
+  form.sync_minutes.value = String(Math.round(settings.sync_minutes || 3));
+  if (!form.sync_minutes.value) form.sync_minutes.value = "3";
+  loadGapLabels();
   $("repo-apply").hidden = true;
   keyStatus("github-status", settings.keys.github);
   keyStatus("anthropic-status", settings.keys.anthropic);
@@ -506,6 +702,31 @@ form.voice_engine.addEventListener("change", async () => {
 form.voice_speed.addEventListener("change", () => save({ voice_speed: Number(form.voice_speed.value) }));
 form.calls_you.addEventListener("change", () => save({ calls_you: form.calls_you.checked }));
 form.watch_minutes.addEventListener("change", () => save({ watch_minutes: Number(form.watch_minutes.value) }));
+form.sync_minutes.addEventListener("change", () => save({ sync_minutes: Number(form.sync_minutes.value) }));
+
+/** "My gaps": toggles for the labels on the repo's gap issues (plus any chosen before). */
+async function loadGapLabels() {
+  const box = $("gap-labels");
+  let labels = [];
+  try { labels = (await api("/api/gaps")).labels; } catch (e) { box.replaceChildren(Object.assign(document.createElement("small"), { textContent: `Couldn't read the repo's labels: ${e.message}` })); return; }
+  const chosen = new Set(settings.gap_labels || []);
+  const all = [...new Set([...chosen, ...labels])];
+  if (!all.length) { box.replaceChildren(Object.assign(document.createElement("small"), { textContent: "No gaps have labels yet." })); return; }
+  box.replaceChildren(...all.map((l) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pick";
+    b.textContent = l;
+    b.setAttribute("aria-pressed", String(chosen.has(l)));
+    b.addEventListener("click", async () => {
+      if (chosen.has(l)) chosen.delete(l); else chosen.add(l);
+      b.setAttribute("aria-pressed", String(chosen.has(l)));
+      await save({ gap_labels: [...chosen] });
+      refreshBadge();
+    });
+    return b;
+  }));
+}
 $("voice-play").addEventListener("click", async () => {
   $("voice-play").disabled = true;
   try {
@@ -656,9 +877,93 @@ async function applySetup(changes, message) {
 }
 bw.onSetupLine((l) => { const log = $("setup-log"); log.textContent += `${l}\n`; log.scrollTop = log.scrollHeight; });
 
+// ---------------------------------------------------------------- live: sync status, edits, publishes
+
+let toastTimer = null;
+function toast(text, link = null) {
+  const t = $("toast");
+  t.replaceChildren(text);
+  if (link) {
+    const a = document.createElement("a");
+    a.href = link.url;
+    a.textContent = link.label;
+    t.append(" ", a);
+  }
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.hidden = true), 7000);
+}
+
+function syncPill(st) {
+  const pill = $("sync");
+  if (!st || st.error && !st.ready) {
+    pill.dataset.state = "off";
+    $("sync-label").textContent = st?.error ? "Can't reach GitHub" : "Not set up";
+    pill.title = st?.error || "Choose a knowledge repo in Settings.";
+    return;
+  }
+  pill.dataset.state = st.syncing ? "syncing" : st.error ? "off" : "ok";
+  const mins = st.synced_at ? Math.floor((Date.now() / 1000 - Math.max(st.synced_at, st.checked_at || 0)) / 60) : null;
+  $("sync-label").textContent = st.syncing ? "Syncing…" : st.error ? "Offline" : mins === null ? "Not synced" : mins < 1 ? "Up to date" : `Synced ${mins} min ago`;
+  pill.title = st.error ? `${st.error} Showing the copy from ${new Date(st.synced_at * 1000).toLocaleString()}.`
+    : `${st.repo} at ${String(st.sha || "").slice(0, 7)}. Bookwyrm keeps a copy on this computer and checks GitHub every few minutes. Click to check now.`;
+}
+let lastStatus = null;
+async function refreshStatus() {
+  try { lastStatus = await api("/api/ws/status"); } catch { lastStatus = null; }
+  syncPill(lastStatus);
+}
+$("sync").addEventListener("click", async () => {
+  syncPill({ ...(lastStatus || {}), syncing: true, ready: true });
+  try { lastStatus = { ...(await api("/api/ws/sync", { method: "POST" })) }; } catch (e) { toast(e.message); }
+  refreshStatus();
+  if (view === "knowledge") loadTree();
+});
+
+/** "3 edits to review": Bookwyrm's unpublished edits, from any conversation. */
+async function refreshChanges() {
+  let changes = [];
+  try { changes = await api("/api/ws/changes"); } catch {}
+  const waiting = changes.flatMap((c) => c.files.filter((f) => f.status === "pending" || f.status === "conflict").map((f) => ({ change: c.id, path: f.path })));
+  const chip = $("review-chip");
+  chip.hidden = !waiting.length;
+  chip.textContent = `${waiting.length} edit${waiting.length === 1 ? "" : "s"} to review`;
+  chip.onclick = () => {
+    if (view !== "chat" && view !== "knowledge") setView("chat", { conversation: conv || undefined });
+    showPreview(waiting[0].change, waiting[0].path);
+  };
+  if (view === "knowledge" && tree) loadTree();
+}
+
+function refreshBadge() {
+  api("/api/gaps/count").then((d) => setLibraryCount(d.count)).catch(() => {});
+}
+
+function listen() {
+  const es = new EventSource(`${voiceUrl}/api/ws/events`);
+  es.onmessage = () => {};
+  const on = (type, fn) => es.addEventListener(type, (e) => { try { fn(JSON.parse(e.data)); } catch {} });
+  on("change", (ev) => {
+    if (handleEvent(ev) && view !== "chat" && view !== "knowledge") setView("chat", { conversation: conv || undefined });
+    refreshChanges();
+  });
+  for (const type of ["review", "conflict", "upstream"]) on(type, (ev) => { handleEvent(ev); refreshChanges(); });
+  on("show", (ev) => { if (handleEvent(ev) && view !== "chat" && view !== "knowledge") setView("chat", { conversation: conv || undefined }); });
+  on("sync", (ev) => { if ("ready" in ev) { lastStatus = ev; syncPill(ev); } else syncPill({ ...(lastStatus || {}), syncing: true }); });
+  on("synced", (ev) => { handleEvent(ev); if (view === "knowledge") loadTree(); });
+  on("published", async (ev) => {
+    refreshChanges();
+    refreshBadge();
+    if (conv === ev.change) { await loadHistory(); if (view === "chat") openConversation(conv); }
+  });
+  es.onerror = () => { syncPill(null); };
+  es.onopen = () => refreshStatus();
+}
+
 // ---------------------------------------------------------------- start
 
 $("nav-new").addEventListener("click", () => setView("chat", { fresh: true }));
+$("nav-knowledge").addEventListener("click", () => setView("knowledge"));
 $("nav-library").addEventListener("click", () => setView("library"));
 $("nav-settings").addEventListener("click", () => setView("settings"));
 bw.onShow((opts) => route(opts));
@@ -672,7 +977,13 @@ bw.onShow((opts) => route(opts));
     if (first) $("empty-greeting").textContent = `What do you need, ${first}?`;
     if (s.repo) $("empty-repo").textContent = `Ask about ${s.repo}, or tell Bookwyrm something it should know.`;
   } catch {}
+  initDoc({ api, json, toast, onAsk: askAbout, onChanges: refreshChanges, voiceUrl: () => voiceUrl });
   await loadHistory();
   route(Object.fromEntries(new URLSearchParams(location.search)));
-  api("/api/library").then((d) => { if (!d.error) setLibraryCount(d.quarantine.length + d.gaps.length); }).catch(() => {});
+  refreshBadge();
+  refreshStatus();
+  refreshChanges();
+  listen();
+  setInterval(refreshStatus, 60_000);
+  setInterval(refreshBadge, 5 * 60_000);
 })();

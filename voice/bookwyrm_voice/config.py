@@ -24,7 +24,8 @@ VOICE_DIR = PACKAGE_DIR.parent
 
 # Settings the app may change (PUT /api/settings). Repo and keys go through the setup wizard,
 # because they also change the Hermes profile.
-EDITABLE = ("name", "team", "voice", "voice_speed", "voice_engine", "natural_voice", "calls_you", "watch_minutes")
+EDITABLE = ("name", "team", "voice", "voice_speed", "voice_engine", "natural_voice", "calls_you", "watch_minutes",
+            "gap_labels", "sync_minutes")
 
 
 def data_dir() -> Path:
@@ -107,6 +108,11 @@ class Settings:
     watch_minutes: float = 5.0
     greeting_override: str = ""
 
+    # The workspace (ADR 0008): how often the local copy of the repo checks GitHub, and which
+    # issue labels mark gaps as the person's own (the gaps list shows those by default).
+    sync_minutes: float = 3.0
+    gap_labels: tuple[str, ...] = ()
+
     @property
     def caller(self) -> str:
         return ", ".join(p for p in (self.name, self.team) if p)
@@ -152,6 +158,7 @@ class Settings:
             "voice": self.voice, "voice_speed": self.voice_speed,
             "voice_engine": self.voice_engine, "natural_voice": self.natural_voice,
             "calls_you": self.calls_you, "watch_minutes": self.watch_minutes,
+            "sync_minutes": self.sync_minutes, "gap_labels": list(self.gap_labels),
             "keys": {"github": bool(self.github_token), "hermes_api": bool(self.hermes_key),
                      "anthropic": bool(secrets.get("ANTHROPIC_API_KEY")),
                      "gateway": bool(secrets.get("LITELLM_API_KEY"))},
@@ -211,4 +218,6 @@ def load_settings(env_file: str | os.PathLike | None = None) -> Settings:
         github_token=env.get("BOOKWYRM_GITHUB_TOKEN") or secrets.get("GITHUB_PERSONAL_ACCESS_TOKEN", ""),
         watch_minutes=float(pick("BOOKWYRM_WATCH_MINUTES", "watch_minutes", 5.0)),
         greeting_override=env.get("BOOKWYRM_GREETING", "").strip() or legacy.get("BOOKWYRM_GREETING", ""),
+        sync_minutes=float(pick("BOOKWYRM_SYNC_MINUTES", "sync_minutes", 3.0)),
+        gap_labels=tuple(str(x) for x in (saved.get("gap_labels") or []) if str(x).strip()),
     )

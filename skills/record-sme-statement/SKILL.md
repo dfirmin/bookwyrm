@@ -1,41 +1,33 @@
 ---
 name: record-sme-statement
-description: Turn knowledge a person gives you into an attributed source note in sources/inbox/, so the next Archivist run adds it to the right concept. Use whenever someone supplies content the bundle lacks or gets wrong.
-version: 0.1.0
+description: Keep what a person tells you as an attributed source note in sources/inbox/, so Archivist can cite it. Use when the person wants their statement on record as a source, alongside or instead of editing the concept directly.
+version: 0.2.0
 metadata:
   hermes:
     tags: [bookwyrm, sme, source, inbox]
-    requires_toolsets: [mcp-github]
+    requires_toolsets: [mcp-workspace]
 ---
 
-# Recording what a person tells you
+# Recording what a person tells you as a source
 
-Why a note and not an edit: a concept body only restates its sources (docs/adr/0002 in the
-Bookwyrm repo). The note is the source; the engine places it on the concept, writes it in,
-verifies it, re-judges gaps and re-scores.
+Editing the concept directly is the default (skill `edit-documents`). A source note is the extra
+step for when the person wants it: Archivist's concepts cite sources, so a note means the knowledge
+is cited, the next run's verifier keeps it, and who-said-what is in the repo, not only in a pull
+request. Offer it once when someone supplies knowledge the sources don't have; do it when they say
+yes, or when they ask for it.
 
 ## 1. Know who is speaking
 
-You need a name and a team or role. If you don't have them, ask. Never record an unattributed
-statement.
+A name and a team or role. The app usually tells you; if not, ask.
 
-## 2. Find the concept it is about
+## 2. Get the statement in their words
 
-Usually you already have it (the question, the gap, the quarantine draft). Otherwise find it
-via `index.md`. Read its frontmatter: you need its title, its owning team (or subject area) and
-— if its concept type declares `identity` in `contracts/concept-types.yaml` — its identity
-values (for example `okfx_physical_views`). If there is no concept yet, the note can still go
-in; name the subject and owner clearly so intake can place it.
+Values, rules, exceptions, who to contact. Quote what they said. You may drop filler ("um", "so
+basically"); don't reword or add to it. If they correct themselves, quote both, in order.
 
-## 3. Get the statement in their words
+## 3. Write the note
 
-Ask until you have the knowledge itself, stated plainly: values, rules, exceptions, who to
-contact. Quote what they said. You may drop filler ("um", "so basically"); you may not reword,
-summarise or add to it. If they correct themselves, quote both, in order.
-
-## 4. Write the note
-
-Path: `sources/inbox/sme-<YYYY-MM-DD>-<slug>.md`.
+Path: `sources/inbox/sme-<YYYY-MM-DD>-<slug>.md`, with `mcp_workspace_write_file`:
 
 ```markdown
 ---
@@ -53,12 +45,10 @@ About: <one line naming the concept, its owning team, and identity values if any
 > <Name>: <their words>
 ```
 
-Read the full note back to the person. Write it only after they confirm it says what they mean.
+The "About" line is how Archivist's intake finds the concept: name it, its owning team and, for
+identity-keyed types (`identity` in `contracts/concept-types.yaml`), the identity values.
 
-## 5. Open the PR
+It shows up in their preview like any change; they approve it there. If you also edited the
+concept, both go in the same change.
 
-Follow skill `repo-changes`, branch `bookwyrm/note-<slug>`. Tell the person: once the PR is
-merged, the next Archivist run adds it to the concept; until then the bundle doesn't say it.
-
-Remember the conclusion, who gave it and the PR number, so you can tell the next person who
-asks.
+Remember the conclusion and who gave it, so you can tell the next person who asks.

@@ -303,7 +303,7 @@ function openBookwyrmWindow(opts = {}) {
   }
   const dark = nativeTheme.shouldUseDarkColors;
   bookwyrmWindow = new BrowserWindow({
-    width: 1040, height: 700, minWidth: 720, minHeight: 460,
+    width: 1240, height: 760, minWidth: 820, minHeight: 480,
     title: "Bookwyrm",
     show: false,
     icon: path.join(__dirname, "build", "icon.png"),
@@ -337,6 +337,38 @@ nativeTheme.on("updated", () => {
     bookwyrmWindow.setTitleBarOverlay({ color: "#00000000", symbolColor: nativeTheme.shouldUseDarkColors ? "#ffffff" : "#000000" });
   }
 });
+
+// ---- Bookwyrm's edits open the window ---------------------------------------------------------------
+// When Bookwyrm changes a document (often during a call, when no window is open), the person should
+// see it straight away, rendered, ready to approve (ADR 0008). The window follows the edits itself
+// once it's open; this only opens it.
+
+async function watchEdits() {
+  for (;;) {
+    try {
+      const r = await fetch(`${VOICE_URL}/api/ws/events`);
+      const dec = new TextDecoder();
+      let buf = "";
+      for await (const chunk of r.body) {
+        buf += dec.decode(chunk, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const block = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          const data = /^data: (.*)$/m.exec(block)?.[1];
+          if (!data) continue;
+          let ev;
+          try { ev = JSON.parse(data); } catch { continue; }
+          if ((ev.type === "change" && ev.op !== "discard") || ev.type === "show") {
+            if (!bookwyrmWindow) openBookwyrmWindow(ev.type === "show" ? { view: "preview", path: ev.path } : { view: "preview", change: ev.change, path: ev.path });
+            else if (!bookwyrmWindow.isVisible() || bookwyrmWindow.isMinimized()) { bookwyrmWindow.showInactive(); if (bookwyrmWindow.isMinimized()) bookwyrmWindow.restore(); }
+          }
+        }
+      }
+    } catch {}
+    await new Promise((res) => setTimeout(res, 5000));   // the service is starting or restarting
+  }
+}
 
 // ---- OS look --------------------------------------------------------------------------------------
 
@@ -503,6 +535,7 @@ if (!app.requestSingleInstanceLock()) {
     if (!(await voiceHealth())) startVoiceService();
     createCompanion();
     createTray();
+    watchEdits();
     setTimeout(() => { started = true; }, 2000);
     if (!globalShortcut.register(ROBOT_SHORTCUT, () => setCompanionVisible(!companion?.isVisible()))) {
       console.warn(`${ROBOT_SHORTCUT} is taken by another app; the robot's menu and the ${IS_MAC ? "menu-bar" : "tray"} icon still work.`);

@@ -67,9 +67,9 @@ def clean_path(path: str) -> str:
     if not p:
         raise WorkspaceError("A file path is needed (relative to the repo root, e.g. knowledge/policies/Expense Policy.md).")
     parts = PurePosixPath(p).parts
-    if any(part in ("..", "") for part in parts) or re.match(r"^[A-Za-z]:", p):
+    if any(part in ("..", "") for part in parts) or re.match(r"^[A-Za-z]:", p) or "\x00" in p:
         raise WorkspaceError(f"{path!r} isn't a path inside the repo.")
-    if parts[0] in HIDDEN_TOP:
+    if parts[0].casefold() in HIDDEN_TOP:   # .GITHUB is .github on macOS and Windows
         raise WorkspaceError(f"{parts[0]}/ isn't part of the knowledge Bookwyrm looks after.")
     return "/".join(parts)
 
@@ -80,6 +80,11 @@ def repo_key(repo: str) -> str:
 
 def now_utc() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _read(path: Path) -> str:
+    """A text file exactly as stored: Windows line endings stay as they are."""
+    return path.read_bytes().decode("utf-8")
 
 
 def is_text(data: bytes) -> bool:
@@ -105,9 +110,27 @@ def _flow(item: Any) -> str:
     return yaml.safe_dump(item, default_flow_style=True, sort_keys=False, width=1_000_000).strip()
 
 
+def _key_block(lines: list[str], idx: int) -> int:
+    """The end (exclusive) of the value of the top-level key on line ``idx``: indented lines,
+    "- " items at column 0, blank lines inside it, and a flow value that spans lines."""
+    depth = lines[idx].count("[") + lines[idx].count("{") - lines[idx].count("]") - lines[idx].count("}")
+    end = idx + 1
+    j = idx + 1
+    while j < len(lines):
+        line = lines[j]
+        if depth <= 0 and line.strip() and not line.startswith((" ", "\t", "- ")) and line.strip() != "-":
+            break
+        depth += line.count("[") + line.count("{") - line.count("]") - line.count("}")
+        j += 1
+        if line.strip():
+            end = j
+    return end
+
+
 def stamp_human(text: str, by: str, at: str) -> str:
     """Append ``{by: <by>, at: <at>}`` to the concept's OKF ``verified`` list, changing nothing
-    else in the frontmatter. A file with no frontmatter gets one holding only the stamp."""
+    else in the frontmatter. A file with no frontmatter gets one holding only the stamp. Raises
+    WorkspaceError rather than write frontmatter that doesn't parse."""
     entry = f'{{by: {json.dumps(by)}, at: {at}}}'
     nl = "\r\n" if "\r\n" in text[:2000] else "\n"
     m = _FM.match(text)
@@ -115,36 +138,40 @@ def stamp_human(text: str, by: str, at: str) -> str:
         return f"---{nl}verified:{nl}  - {entry}{nl}---{nl}{nl}{text}"
     fm = m.group(1)
     lines = fm.splitlines()
+    try:
+        before = yaml.safe_load(fm) or {}
+    except yaml.YAMLError as e:
+        raise WorkspaceError(f"This document's frontmatter isn't valid YAML, so it can't be stamped: {e}") from e
+    if not isinstance(before, dict):
+        raise WorkspaceError("This document's frontmatter isn't a set of fields.")
+    old = before.get("verified")
+    old_items = old if isinstance(old, list) else ([] if old is None else [old])
     idx = next((i for i, line in enumerate(lines) if re.match(r"^verified\s*:", line)), None)
     if idx is None:
         lines += ["verified:", f"  - {entry}"]
     else:
+        end = _key_block(lines, idx)
         value = lines[idx].split(":", 1)[1].strip()
-        if value and not value.startswith("#"):
-            # An inline value: one mapping, or a flow list. Rewrite it as a block list.
-            try:
-                old = yaml.safe_load(value)
-            except yaml.YAMLError:
-                old = value
-            items = old if isinstance(old, list) else ([] if old is None else [old])
-            lines[idx:idx + 1] = ["verified:", *[f"  - {_flow(i)}" for i in items], f"  - {entry}"]
+        items = [ln for ln in lines[idx + 1:end] if ln.strip()]
+        if isinstance(old, list) and (not value or value.startswith("#")) and items and items[0].lstrip().startswith("- "):
+            # Already a block list: add one item in the same style, after the last.
+            prefix = items[0][: len(items[0]) - len(items[0].lstrip())] + "- "
+            lines.insert(end, f"{prefix}{entry}")
         else:
-            # A block list under the key: its lines are indented, or "- " items at column 0.
-            prefix = None
-            last = idx
-            j = idx + 1
-            while j < len(lines):
-                line = lines[j]
-                if line.strip() and not line.startswith((" ", "\t", "- ")):
-                    break
-                if line.strip():
-                    last = j
-                    if prefix is None and line.lstrip().startswith("- "):
-                        prefix = line[: len(line) - len(line.lstrip())] + "- "
-                j += 1
-            lines.insert(last + 1, f"{prefix or '  - '}{entry}")
+            # An inline mapping, a flow list (on one line or several), a block mapping: rewrite
+            # just this key as a block list holding what was there, then the stamp.
+            lines[idx:end] = ["verified:", *[f"  - {_flow(i)}" for i in old_items], f"  - {entry}"]
     new_fm = nl.join(lines) + nl
-    return text[: m.start(1)] + new_fm + text[m.end(1):]
+    out = text[: m.start(1)] + new_fm + text[m.end(1):]
+    try:
+        after = yaml.safe_load(new_fm)
+    except yaml.YAMLError as e:
+        raise WorkspaceError(f"Stamping this document's frontmatter would break it ({e}); not publishing it.") from e
+    if (not isinstance(after, dict) or not isinstance(after.get("verified"), list)
+            or after["verified"][:-1] != old_items or {k: v for k, v in after.items() if k != "verified"}
+            != {k: v for k, v in before.items() if k != "verified"}):
+        raise WorkspaceError("Stamping this document's frontmatter would change more than the stamp; not publishing it.")
+    return out
 
 
 def human_label(settings: Settings) -> str:
@@ -190,26 +217,52 @@ def apply_preserving(original: str, normalized: str, edited: str) -> str:
     o = original.splitlines(True)
     n = normalized.splitlines(True)
     e = edited.splitlines(True)
-    to_orig: dict[int, int] = {}
-    for tag, i1, i2, j1, _ in SequenceMatcher(None, [_canon(x) for x in n], [_canon(x) for x in o], autojunk=False).get_opcodes():
-        if tag == "equal":
-            for k in range(i2 - i1):
-                to_orig[i1 + k] = j1 + k
+    # How the editor's lines correspond to the original's, block by block.
+    seg: list[tuple | None] = [None] * len(n)     # n index -> (tag, i1, i2, j1, j2)
+    orig_only: dict[int, list[str]] = {}          # n position -> original lines the editor dropped there
+    for op in SequenceMatcher(None, [_canon(x) for x in n], [_canon(x) for x in o], autojunk=False).get_opcodes():
+        tag, i1, i2, j1, j2 = op
+        if tag == "insert":
+            orig_only.setdefault(i1, []).extend(o[j1:j2])
+        for i in range(i1, i2):
+            seg[i] = op
     out: list[str] = []
-    oc = 0     # the next original line not yet placed
-    for tag, i1, i2, j1, j2 in SequenceMatcher(None, n, e, autojunk=False).get_opcodes():
-        mapped = [to_orig[i] for i in range(i1, i2) if i in to_orig and to_orig[i] >= oc]
-        if tag == "equal":
-            if mapped:
-                out += o[oc:mapped[-1] + 1]
-                oc = mapped[-1] + 1
-            else:
-                out += n[i1:i2]
+    placed: set[int] = set()
+
+    def add(lines: list[str]):
+        if lines and out and not out[-1].endswith(("\n", "\r")):
+            out[-1] += "\r\n" if out[-1:] and "\r\n" in original[:2000] else "\n"
+        out.extend(lines)
+
+    def dropped_at(p: int):
+        if p in orig_only and p not in placed:
+            placed.add(p)
+            add(orig_only[p])
+
+    for tag, a1, a2, b1, b2 in SequenceMatcher(None, n, e, autojunk=False).get_opcodes():
+        if tag != "equal":
+            # What they replaced or deleted goes, with anything the editor had dropped inside it.
+            dropped_at(a1)
+            placed.update(range(a1 + 1, a2))
+            add(e[b1:b2])
             continue
-        if mapped:                       # what they replaced or deleted: drop its original lines
-            oc = mapped[-1] + 1
-        out += e[j1:j2]
-    out += o[oc:]
+        i = a1
+        while i < a2:
+            dropped_at(i)
+            stag, i1, i2, j1, j2 = seg[i]
+            if stag == "equal":
+                add([o[j1 + (i - i1)]])
+                i += 1
+            elif stag == "replace" and a1 <= i1 and i2 <= a2 and i == i1:
+                add(o[j1:j2])                     # reformatted, untouched: the original form
+                placed.update(range(i1 + 1, i2))
+                i = i2
+            elif stag == "replace":
+                add([n[i]])                       # partly edited block: the editor's form
+                i += 1
+            else:                                 # a line only the editor has (a blank, say)
+                i += 1
+    dropped_at(len(n))
     return "".join(out)
 
 
@@ -401,6 +454,7 @@ class Workspace:
         self._settings = settings
         s = settings()
         self.repo = s.repo
+        self.token = s.github_token
         self.root = root or data_dir() / "workspace" / repo_key(self.repo)
         self.main = self.root / "main"
         self.changes_dir = self.root / "changes"
@@ -599,7 +653,7 @@ class Workspace:
             f = ch.files[path]
             if f["op"] == "delete":
                 raise WorkspaceError(f"{path} is deleted in this conversation's changes (not published yet).")
-            return (ch.dir / "new" / path).read_text(encoding="utf-8")
+            return _read(ch.dir / "new" / path)
         text = self.read_main(path)
         if text is None:
             raise WorkspaceError(f"There's no {path} in {self.repo}.")
@@ -719,10 +773,11 @@ class Workspace:
             base.unlink(missing_ok=True)
         if path in ch.files:
             ch.files[path]["base_exists"] = src.is_file()
+            ch.files[path].pop("upstream", None)
 
     def base_text(self, ch: Change, path: str) -> str | None:
         f = ch.dir / "base" / path
-        return f.read_text(encoding="utf-8") if f.is_file() else None
+        return _read(f) if f.is_file() else None
 
     def write(self, cid: str, path: str, content: str, *, by: str = "bookwyrm", approve: bool = False) -> dict:
         path = clean_path(path)
@@ -844,7 +899,7 @@ class Workspace:
             raise WorkspaceError(f"{path} has no unpublished changes in this conversation.")
         f = ch.files[path]
         before = self.read_main(path)
-        after = None if f["op"] == "delete" else (ch.dir / "new" / path).read_text(encoding="utf-8")
+        after = None if f["op"] == "delete" else _read(ch.dir / "new" / path)
         order = [p for p in ch.manifest.get("order", []) if p in ch.files]
         return {"path": path, **f, "before": before, "after": after, "index": order.index(path), "total": len(order),
                 "upstream_changed": bool(f.get("upstream"))}
@@ -856,7 +911,10 @@ class Workspace:
         ch = self.get_change(cid)
         if ch is None or not ch.files:
             raise WorkspaceError("There's nothing waiting for review in this conversation.")
-        paths = [clean_path(path)] if path else [p for p, f in ch.files.items() if f["status"] in ("pending", "conflict")]
+        # "Approve all" approves what's waiting; a conflict has to be redone first. "Discard all"
+        # also drops conflicts.
+        waiting = ("pending",) if status == "approved" else ("pending", "conflict")
+        paths = [clean_path(path)] if path else [p for p, f in ch.files.items() if f["status"] in waiting]
         for p in paths:
             if p not in ch.files:
                 raise WorkspaceError(f"{p} isn't part of this conversation's changes.")
@@ -899,6 +957,9 @@ class Workspace:
         approved = [p for p in ch.manifest.get("order", []) if p in ch.files and ch.files[p]["status"] == "approved"]
         if not approved:
             raise WorkspaceError("Nothing is approved yet.")
+        # Exactly what was decided when publishing began. An edit made while it runs (Bookwyrm can
+        # keep working) changes "updated" and is kept for the next round, not cleared.
+        decided = {p: f.get("updated") for p, f in ch.files.items() if f["status"] in ("approved", "rejected")}
         await self.sync()
         s = self._settings()
         writes: dict[str, str] = {}
@@ -913,8 +974,8 @@ class Workspace:
                     conflicts.append(p)
                 elif theirs is not None:
                     deletes.append(p)
-                continue
-            ours = (ch.dir / "new" / p).read_text(encoding="utf-8")
+                continue                  # (already deleted on GitHub: nothing to do)
+            ours = _read(ch.dir / "new" / p)
             if theirs == base:
                 merged = ours
             elif base is None or theirs is None:
@@ -934,7 +995,11 @@ class Workspace:
                     "message": "Some documents changed on GitHub in ways that overlap these edits: "
                                + ", ".join(conflicts) + ". Ask Bookwyrm to redo them on the latest version."}
         if not writes and not deletes:
-            raise WorkspaceError("These edits are already on GitHub; there's nothing new to publish.")
+            self._clear(cid, decided)
+            result = {"ok": True, "pr": None, "url": None, "merged": True, "title": "Nothing new",
+                      "files": approved, "resolved": [], "message": "These changes are already on GitHub."}
+            self.emit({"type": "published", "change": cid, **result})
+            return result
 
         title = ch.manifest.get("title") or self._title(writes, deletes)
         person = s.caller or "someone using Bookwyrm"
@@ -942,33 +1007,34 @@ class Workspace:
         stamp = datetime.now().strftime("%Y%m%d-%H%M")
         slug = re.sub(r"[^a-z0-9]+", "-", (title or cid).lower()).strip("-")[:40] or "change"
         body = self._pr_body(writes, deletes, ch, person, resolves)
-        async with self.gh.client() as c:
-            head = self.state.get("sha") or await self.gh.head(c)
-            branch = await self.gh.publish(c, head=head, branch=f"bookwyrm/{slug}-{stamp}",
-                                           message=f"{title}\n\nApproved-by: {person} (in Bookwyrm)",
-                                           writes=writes, deletes=deletes)
-            pr = await self.gh.pull_request(c, branch=branch, title=title, body=body)
-            merged, why = await self.gh.merge(c, pr["number"], title)
-            if merged:
-                await self.gh.delete_branch(c, branch)
-            for n in resolves:
-                try:
+        try:
+            async with self.gh.client() as c:
+                head = self.state.get("sha") or await self.gh.head(c)
+                branch = await self.gh.publish(c, head=head, branch=f"bookwyrm/{slug}-{stamp}",
+                                               message=f"{title}\n\nApproved-by: {person} (in Bookwyrm)",
+                                               writes=writes, deletes=deletes)
+                pr = await self.gh.pull_request(c, branch=branch, title=title, body=body)
+                merged, why = await self.gh.merge(c, pr["number"], title)
+        except httpx.HTTPError as e:
+            raise WorkspaceError(f"Lost the connection to GitHub while publishing ({type(e).__name__}). "
+                                 "Nothing is lost here; approve again to retry.") from e
+        # From here the change is on GitHub: tidying up must not fail the publish.
+        try:
+            async with self.gh.client() as c:
+                if merged:
+                    await self.gh.delete_branch(c, branch)
+                for n in resolves:
                     if merged:
                         await self.gh.comment(c, n, f"Resolved in #{pr['number']}, approved by {person} in Bookwyrm.")
                         await self.gh.close_issue(c, n)
                     else:
                         await self.gh.comment(c, n, f"A fix is waiting for review in #{pr['number']} (from {person}, via Bookwyrm).")
-                except WorkspaceError as e:
-                    logger.warning(str(e))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Published #{pr['number']}, but couldn't tidy up on GitHub: {e}")
         result = {"ok": True, "pr": pr["number"], "url": pr["html_url"], "merged": merged, "title": title,
                   "files": approved, "branch": branch, "resolved": resolves if merged else [],
                   "message": "" if merged else f"The pull request is open but GitHub wouldn't merge it: {why}"}
-        # Clear what was published (and what was discarded); anything still pending stays.
-        for p in list(ch.files):
-            if ch.files[p]["status"] in ("approved", "rejected"):
-                del ch.files[p]
-                (ch.dir / "new" / p).unlink(missing_ok=True)
-                (ch.dir / "base" / p).unlink(missing_ok=True)
+        ch = self._clear(cid, decided)
         ch.manifest.setdefault("history", []).append({**result, "at": time.time()})
         ch.manifest["title"] = ""
         ch.manifest["resolves"] = []
@@ -980,6 +1046,19 @@ class Workspace:
             except WorkspaceError:
                 pass
         return result
+
+    def _clear(self, cid: str, decided: dict[str, Any]) -> Change:
+        """Drop what was published or discarded, as it was when publishing began. Re-reads the
+        change, so edits made meanwhile (and flags a sync set) are kept."""
+        ch = self.get_change(cid)
+        for p, updated in decided.items():
+            f = ch.files.get(p)
+            if f and f["status"] in ("approved", "rejected") and f.get("updated") == updated:
+                del ch.files[p]
+                (ch.dir / "new" / p).unlink(missing_ok=True)
+                (ch.dir / "base" / p).unlink(missing_ok=True)
+        self._save(ch)
+        return ch
 
     @staticmethod
     def _title(writes: dict, deletes: list) -> str:

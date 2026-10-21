@@ -60,6 +60,8 @@ class FakeGitHub:
         self.closed: list[tuple[int, str]] = []
         self.issues: list[dict] = []
         self.merge_refusal: str | None = None
+        self.on_merge = None          # called while a merge is in flight
+        self.fail_comments = False
         self.calls: list[str] = []
         self.n = 0
         self.branches["main"] = self._commit(files)
@@ -154,6 +156,8 @@ class FakeGitHub:
         if m == "PUT" and re.match(r"^/pulls/\d+/merge$", path):
             if self.merge_refusal:
                 return httpx.Response(405, json={"message": self.merge_refusal})
+            if self.on_merge:
+                self.on_merge()
             pr = next(p for p in self.pulls if p["number"] == int(path.split("/")[2]))
             # A squash: main becomes the branch's tree on top of main.
             branch_files = self.commits[self.branches[pr["head"]]]
@@ -161,6 +165,8 @@ class FakeGitHub:
             pr["merged"] = True
             return httpx.Response(200, json={"merged": True})
         if m == "POST" and re.match(r"^/issues/\d+/comments$", path):
+            if self.fail_comments:
+                raise httpx.ConnectError("down")
             self.comments.append((int(path.split("/")[2]), body["body"]))
             return httpx.Response(201, json={})
         if m == "PATCH" and re.match(r"^/issues/\d+$", path):
@@ -356,6 +362,54 @@ def test_upstream_changes():
         shutil.rmtree(root)
 
 
+def test_publish_edge_cases():
+    gh, ws, root = make({"knowledge/a.md": "---\r\ntitle: A\r\n---\r\n\r\nOne\r\nTwo\r\n", "b.md": "b\n", "c.md": "c\n", "d.md": "d\n"})
+    try:
+        run(ws.sync())
+        # Windows line endings survive an edit and publish, with no false conflict.
+        ws.edit("w", "knowledge/a.md", "Two", "Three")
+        ws.review("w", "approved")
+        r = run(ws.publish("w"))
+        assert r["merged"] and gh.main["knowledge/a.md"].endswith("\r\nOne\r\nThree\r\n"), repr(gh.main["knowledge/a.md"])
+        assert "\r\nverified:\r\n" in gh.main["knowledge/a.md"]
+        # An edit Bookwyrm makes while a publish is in flight isn't lost.
+        ws.write("x", "b.md", "b2\n")
+        ws.review("x", "approved")
+        gh.on_merge = lambda: ws.write("x", "b.md", "b3\n")
+        run(ws.publish("x"))
+        gh.on_merge = None
+        f = ws.get_change("x").files["b.md"]
+        assert f["status"] == "pending" and ws.read("b.md", "x") == "b3\n"
+        # Approve all leaves a conflict alone and approves the rest.
+        ws.write("y", "c.md", "c-mine\n")
+        ws.write("y", "d.md", "d-mine\n")
+        gh.push({"c.md": "c-theirs\n"})
+        ws.review("y", "approved", "c.md")
+        run(ws.sync())
+        ch = ws.get_change("y")
+        ch.files["c.md"]["status"] = "conflict"
+        ws._save(ch)
+        ws.review("y", "approved")
+        assert ws.get_change("y").files["d.md"]["status"] == "approved"
+        assert ws.get_change("y").files["c.md"]["status"] == "conflict"
+        ws.discard("y")
+        # Deleting what someone else already deleted is simply done.
+        ws.delete("z", "d.md")
+        gh.push({"d.md": None})
+        ws.review("z", "approved")
+        r = run(ws.publish("z"))
+        assert r["ok"] and r["pr"] is None and ws.get_change("z").files == {}
+        # GitHub going away after the merge doesn't leave the change half-published.
+        gh.fail_comments = True
+        ws.write("v", "b.md", "b4\n")
+        ws.set_meta("v", resolves=[3])
+        ws.review("v", "approved")
+        r = run(ws.publish("v"))
+        assert r["merged"] and ws.get_change("v").files == {} and gh.main["b.md"] == "b4\n"
+    finally:
+        shutil.rmtree(root)
+
+
 def test_person_edit():
     gh, ws, root = make()
     try:
@@ -385,6 +439,15 @@ def test_stamp_formats():
     assert out.startswith("---\nverified:\n  - {by: 'process:x', at: '2026-01-01'}\n") and entry in out, out
     flow = "---\nverified: [{by: a, at: 1}, {by: b, at: 2}]\n---\n"
     assert stamp_human(flow, by, at) == f"---\nverified:\n  - {{by: a, at: 1}}\n  - {{by: b, at: 2}}\n  - {entry}\n---\n"
+    multi = "---\ntitle: A\nverified: [\n  {by: a, at: 1},\n  {by: b, at: 2}\n]\ntags: [x]\n---\n"
+    assert stamp_human(multi, by, at) == f"---\ntitle: A\nverified:\n  - {{by: a, at: 1}}\n  - {{by: b, at: 2}}\n  - {entry}\ntags: [x]\n---\n"
+    mapping = "---\nverified:\n  by: a\n  at: 1\ntitle: A\n---\n"
+    assert stamp_human(mapping, by, at) == f"---\nverified:\n  - {{by: a, at: 1}}\n  - {entry}\ntitle: A\n---\n"
+    try:
+        stamp_human("---\ntitle: [unclosed\n---\n", by, at)
+        raise AssertionError("broken frontmatter should be refused")
+    except WorkspaceError:
+        pass
     crlf = "---\r\ntitle: A\r\n---\r\nbody\r\n"
     assert stamp_human(crlf, by, at) == f"---\r\ntitle: A\r\nverified:\r\n  - {entry}\r\n---\r\nbody\r\n"
     # The result still parses, and the old entries are kept.
@@ -410,6 +473,14 @@ def test_editor_saves_change_only_what_was_edited():
     assert out == original.replace("* Step two", "- Step two, carefully").replace("| 3 | 4 |", "| 3 | 5 |"), out
     added = normal.replace("Text **bold**.\n", "Text **bold**.\n\nA new line.\n")
     assert apply_preserving(original, normal, added) == original + "\nA new line.\n"
+    # Lines the editor renumbers or rewrites, then the person edits or deletes: never duplicated.
+    lst = "1. alpha\n1. beta\n1. gamma\n"
+    assert apply_preserving(lst, "1. alpha\n2. beta\n3. gamma\n", "1. alpha\n2. BETA\n3. gamma\n") == "1. alpha\n2. BETA\n3. gamma\n"
+    assert apply_preserving(lst, "1. alpha\n2. beta\n3. gamma\n", "1. alpha\n2. gamma\n") == "1. alpha\n2. gamma\n"
+    setext = "Title\n=====\n\nText\n"
+    assert apply_preserving(setext, "# Title\n\nText\n", "# New Title\n\nText\n") == "# New Title\n\nText\n"
+    assert apply_preserving(setext, "# Title\n\nText\n", "# Title\n\nMore text\n") == "Title\n=====\n\nMore text\n"
+    assert apply_preserving("a\nb", "a\nb\n", "a\nb\nc\n") == "a\nb\nc\n"
 
 
 def test_gap_info():

@@ -274,7 +274,10 @@ export async function closeDoc(force = false) {
 /** Open a document from the repo. If one of the person's conversations has an unpublished edit to
  *  it, show that edit for review instead. */
 export async function openDocument(path, { review = true } = {}) {
-  if (st.mode === "edit" && st.path !== path && !(await leaveEditor())) return;
+  if (st.mode === "edit") {
+    if (st.path === path) return;                 // already open, in the editor: keep their edits
+    if (!(await leaveEditor())) return;
+  }
   if (review) {
     const pending = (await ctx.api("/api/ws/changes").catch(() => []))
       .find((c) => c.files.some((f) => f.path === path && f.status !== "rejected"));
@@ -423,8 +426,8 @@ function published(r, path) {
     showPreview(st.change, path);
     return;
   }
-  const link = { label: `#${r.pr}`, url: r.url };
-  ctx.toast(r.merged ? `Published and merged: ${r.title}` : `Pull request opened: ${r.message}`, link);
+  const link = r.pr ? { label: `#${r.pr}`, url: r.url } : null;
+  ctx.toast(!r.pr ? r.message : r.merged ? `Published and merged: ${r.title}` : `Pull request opened: ${r.message}`, link);
   // Show what's on GitHub now (the copy has just synced).
   setTimeout(() => openDocument(path, { review: false }).catch(() => {}), 300);
 }
@@ -504,7 +507,8 @@ async function saveEdit() {
   }
   destroyEditor();
   st.mode = "view";
-  ctx.toast(r.merged ? `Saved and merged: ${r.title}` : `Saved as a pull request: ${r.message}`, { label: `#${r.pr}`, url: r.url });
+  ctx.toast(!r.pr ? "Saved. Nothing changed on GitHub." : r.merged ? `Saved and merged: ${r.title}` : `Saved as a pull request: ${r.message}`,
+    r.pr ? { label: `#${r.pr}`, url: r.url } : null);
   await openDocument(path, { review: false });
   ctx.onChanges();
   thoughts(path, before, content, r.url);

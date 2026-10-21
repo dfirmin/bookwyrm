@@ -161,23 +161,28 @@ def workspace(required: bool = True) -> Workspace | None:
             raise HTTPException(409, "Bookwyrm needs a knowledge repo and a GitHub token. Choose them in Settings.")
         return None
     ws: Workspace | None = state["workspace"]
-    if ws is None or ws.repo != s.repo:
+    if ws is None or ws.repo != s.repo or ws.token != s.github_token:   # a new repo, or a replaced token
         old = ws
         ws = state["workspace"] = Workspace(cfg)
-        # The app's event streams carry on (and any opened before a repo was chosen join in).
-        ws.subscribers |= (old.subscribers if old else set()) | _Orphans.subscribers
+        if old:
+            ws.subscribers |= old.subscribers          # the app's event streams carry on
+    if _Orphans.subscribers:                           # streams opened before there was a repo
+        ws.subscribers |= _Orphans.subscribers
+        _Orphans.subscribers.clear()
     return ws
 
 
 async def _sync_loop():
     """Keep the local copy current: at start, then every few minutes."""
     while True:
-        ws = workspace(required=False)
-        if ws is not None:
-            try:
+        try:
+            ws = workspace(required=False)
+            if ws is not None:
                 await ws.sync()
-            except WorkspaceError:
-                pass
+        except WorkspaceError:
+            pass                                       # said in /api/ws/status; try again later
+        except Exception:  # noqa: BLE001 — the loop must outlive any one bad sync
+            logger.exception("Workspace sync failed")
         await asyncio.sleep(max(1.0, cfg().sync_minutes) * 60)
 
 
@@ -446,7 +451,9 @@ async def _ready(ws: Workspace, max_age: float = 0):
             await ws.sync()
         elif max_age:
             await ws.sync(max_age=max_age)
-    except WorkspaceError as e:
+    except Exception as e:  # noqa: BLE001 — offline is fine while there's a copy to work on
+        if not isinstance(e, WorkspaceError):
+            logger.exception("Workspace sync failed")
         if not ws.status()["ready"]:
             raise HTTPException(503, str(e)) from e
 
@@ -634,10 +641,13 @@ async def ws_person_edit(request: Request):
     # as it was written: its normalised starting point vs. what they saved, onto the original.
     if b.get("normalized_base") is not None and b.get("base") is not None:
         content = apply_preserving(b["base"], b["normalized_base"], content)
-    _ws_call(ws.person_edit, cid, b.get("path", ""), content, b.get("base"))
-    r = await _publish(ws, cid)
-    if not r.get("ok"):
-        _ws_call(ws.discard, cid)
+    r: dict = {}
+    try:
+        _ws_call(ws.person_edit, cid, b.get("path", ""), content, b.get("base"))
+        r = await _publish(ws, cid)
+    finally:
+        if not r.get("ok"):
+            ws.discard(cid)        # the editor still has their text; nothing half-done stays behind
     return {**r, "change": cid}
 
 

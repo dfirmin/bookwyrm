@@ -434,8 +434,25 @@ document.addEventListener("mousemove", (e) => {
 
 bw.onLayout(({ side, v }) => { body.dataset.side = side; body.dataset.v = v; });
 
+// Open gaps that are the person's own (their labels in Settings), on the robot's corner.
+async function refreshGapCount() {
+  const el = $("gaps-badge");
+  try {
+    const d = await (await fetch(`${voiceUrl}/api/gaps/count`)).json();
+    el.textContent = d.count > 99 ? "99+" : String(d.count);
+    el.hidden = !d.count;
+    el.title = `${d.count} open gap${d.count === 1 ? "" : "s"}${d.filtered ? " with your labels" : ""}`;
+  } catch {
+    el.hidden = true;
+  }
+}
+
 (async () => {
   await applyOs();
   voiceUrl = await bw.voiceUrl();
   listenForIncoming();
+  setTimeout(refreshGapCount, 4000);
+  setInterval(refreshGapCount, 5 * 60_000);
+  // A merged change may have closed a gap.
+  new EventSource(`${voiceUrl}/api/ws/events`).addEventListener("published", () => setTimeout(refreshGapCount, 2000));
 })();

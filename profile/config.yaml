@@ -19,12 +19,35 @@ model:
   # base_url: "https://litellm.example.internal/v1"
   # api_key_env: "LITELLM_API_KEY"
 
-# Only what Bookwyrm needs: the GitHub MCP server, its own skills, memory and session search,
-# a scratch to-do list, and asking the person a question. No terminal, file, web or browser.
+# Only what Bookwyrm needs (ADR 0008): its workspace (the local copy of the knowledge repo, where
+# every edit goes into the conversation's changes and the person approves it in the app's preview),
+# the GitHub MCP server for issues and pull requests, its own skills, memory and session search, a
+# scratch to-do list, and asking the person a question. No terminal, file, web or browser.
 platform_toolsets:
-  cli: [mcp-github, skills, memory, session_search, todo, clarify]
+  cli: [mcp-workspace, mcp-github, skills, memory, session_search, todo, clarify]
 
 mcp_servers:
+  # Bookwyrm's own tool server, run with the voice service's Python. It talks to the voice service
+  # on 127.0.0.1, which keeps the repo copy, the changes and the preview (voice/bookwyrm_voice).
+  workspace:
+    command: "__BOOKWYRM_VOICE_PYTHON__"
+    args: ["-m", "bookwyrm_voice.workspace_mcp"]
+    tools:
+      include:
+        - list_files
+        - read_file
+        - search
+        - write_file
+        - edit_file
+        - delete_file
+        - move_file
+        - show_document
+        - describe_change
+        - change_status
+        - discard
+      prompts: false
+      resources: false
+
   github:
     command: "docker"
     args:
@@ -39,22 +62,15 @@ mcp_servers:
       GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_PERSONAL_ACCESS_TOKEN}"
     tools:
       include:
-        # read
+        # Read other branches and history (the workspace has the default branch).
         - get_file_contents
-        - search_code
         - list_commits
         - list_branches
-        # write, always on a branch (SOUL.md rules; branch protection on main enforces it)
-        - create_branch
-        - create_or_update_file
-        - push_files
-        - delete_file
-        # pull requests: open and read, never merge
-        - create_pull_request
-        - update_pull_request
+        # Pull requests: read and comment. Bookwyrm's own pull requests are made by the app when
+        # the person approves, never by the agent, so there is no file, branch or merge tool here.
         - pull_request_read
         - list_pull_requests
-        # issues: gap and quarantine issues
+        # Issues: gaps, quarantine and anything else people file.
         - list_issues
         - search_issues
         - issue_read

@@ -103,7 +103,7 @@ export function gatewayModelBlock({ gatewayUrl, gatewayModel }) {
 // The model: block and the lines indented under it, up to the next top-level line.
 const MODEL_BLOCK = /^model:\n(?:(?:[ \t]+.*)?\n)*?(?=^\S)/m;
 
-export function renderProfileFile(text, { skillsDir, repo, mcpBin, isConfig, model }) {
+export function renderProfileFile(text, { skillsDir, repo, mcpBin, isConfig, model, voicePython = paths.venvPython }) {
   text = text.replace(/\r\n/g, '\n');
   if (isConfig && model?.provider === 'gateway') {
     if (!MODEL_BLOCK.test(text)) throw new StepError('profile/config.yaml has changed shape: its model block is missing.', 'Tell whoever maintains Bookwyrm; this is a bug in the repo, not on your machine.');
@@ -113,6 +113,8 @@ export function renderProfileFile(text, { skillsDir, repo, mcpBin, isConfig, mod
   text = text.split('"__BOOKWYRM_SKILLS__"').join(JSON.stringify(skillsDir));
   text = text.split('__BOOKWYRM_SKILLS__').join(skillsDir);
   text = text.split('{{TARGET_REPO}}').join(repo);
+  // The workspace tool server runs with the voice service's Python (ADR 0008).
+  text = text.split('"__BOOKWYRM_VOICE_PYTHON__"').join(JSON.stringify(voicePython));
   if (isConfig && mcpBin) {
     const docker = /    command: "docker"\n    args:\n(?:      - .*\n)+/;
     if (!docker.test(text)) throw new StepError('profile/config.yaml has changed shape: its Docker launch block for GitHub is missing.', 'Tell whoever maintains Bookwyrm; this is a bug in the repo, not on your machine.');
@@ -344,6 +346,7 @@ export const STEPS = [
     detect: () => ({ done: false }),
     plan: (ctx) => [
       `hermes -p ${ctx.profile} mcp test github   (installs Hermes' MCP extra if needed: hermes pm install --extra mcp)`,
+      `hermes -p ${ctx.profile} mcp test workspace   (Bookwyrm's own tools: the knowledge repo on this computer)`,
       `ask Bookwyrm to say "ready" through http://127.0.0.1:${HERMES_PORT}/p/${ctx.profile}/v1/runs (proves the model setting works)`,
     ],
     async run(ctx, io) {
@@ -363,6 +366,13 @@ export const STEPS = [
           : `Check the token in ${path.join(profileDir(ctx.profile), '.env')} covers the repo, then retry.`, res.lines.slice(-12));
       }
       const tools = res.lines.find((l) => /Tools discovered/i.test(l));
+      // Bookwyrm's own workspace tools. Needs the voice service's Python, so only once that's installed.
+      if (fs.existsSync(paths.venvPython)) {
+        const ws = await run(ctx.hermes, ['-p', ctx.profile, 'mcp', 'test', 'workspace'], { onLine: io.log, timeoutMs: 60_000 });
+        if (ws.code !== 0) {
+          throw new StepError('Bookwyrm\'s workspace tools didn\'t start.', 'Run setup again including the "voice" step; it installs them.', ws.lines.slice(-12));
+        }
+      }
       const think = await thinkCheck(ctx, io);
       if (think.warn) return { warn: `${tools ? 'GitHub connected. ' : ''}${think.warn}` };
       return { note: `${tools ? tools.replace(/^[^A-Za-z]*/, '') : 'GitHub connected'}; ${think.note}` };

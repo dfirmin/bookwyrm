@@ -74,6 +74,10 @@ const WINDOW = {
   "window-chat": { js: `document.querySelector('.conv')?.click()` },
   "window-new": { js: `document.getElementById('nav-new').click()` },
   "window-library": { js: `document.getElementById('nav-library').click()` },
+  "window-knowledge": { js: `document.getElementById('nav-knowledge').click(); setTimeout(()=>[...document.querySelectorAll('.tree-row')].find((b)=>b.textContent.trim()==='AGENTS')?.click(),1200)` },
+  "window-review": { js: `setTimeout(()=>document.getElementById('review-chip').click(),800)` },
+  "window-review-dark": { dark: true, js: `setTimeout(()=>document.getElementById('review-chip').click(),800)` },
+  "window-edit": { js: `document.getElementById('nav-knowledge').click(); setTimeout(()=>[...document.querySelectorAll('.tree-row')].find((b)=>b.textContent.trim()==='README')?.click(),1200); setTimeout(()=>[...document.querySelectorAll('#doc-actions button')].find((b)=>b.textContent==='Edit')?.click(),2600)` },
   "window-settings": { js: `document.getElementById('nav-settings').click()` },
   "window-settings-model": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{document.getElementById("settings-view").querySelector(".scroller").scrollTop=250},900)` },
   "window-settings-switch": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{const f=document.getElementById("settings"); f.provider.value="anthropic"; f.provider.dispatchEvent(new Event("change")); document.getElementById("settings-view").querySelector(".scroller").scrollTop=250},2500)` },
@@ -104,14 +108,14 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
     console.log("shot", name);
   }
-  win.setContentSize(1040, 680);
+  win.setContentSize(1240, 760);
   for (const [name, scene] of Object.entries(WINDOW)) {
     nativeTheme.themeSource = scene.dark ? "dark" : "light";
     await load(win, "window.html");
     await win.webContents.insertCSS(MATERIAL);
     await new Promise((r) => setTimeout(r, 1200));
     await win.webContents.executeJavaScript(scene.js);
-    await new Promise((r) => setTimeout(r, name.includes("repo") ? 8000 : name.includes("library") || name.includes("switch") ? 3500 : 1500));
+    await new Promise((r) => setTimeout(r, name.includes("repo") ? 8000 : /library|switch|knowledge|review|edit/.test(name) ? 4000 : 1500));
     fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
     console.log("shot", name);
   }

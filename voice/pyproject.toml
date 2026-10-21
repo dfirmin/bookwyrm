@@ -10,6 +10,8 @@ dependencies = [
   "fastapi>=0.140,<1",
   "uvicorn>=0.50,<1",
   "httpx>=0.28,<1",
+  "merge3>=0.0.15,<1",                    # three-way merges of edits and upstream changes (ADR 0008)
+  "pyyaml>=6,<7",                         # the human stamp in a concept's frontmatter
 ]
 
 # The natural voice (Chatterbox). Setup installs at most one of these, the one this machine can run

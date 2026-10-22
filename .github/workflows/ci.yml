@@ -145,13 +145,18 @@ jobs:
           # The voice service started above is still running; quit it as the app would.
           if [ "$RUNNER_OS" = Windows ]; then taskkill //F //IM python.exe >/dev/null 2>&1 || true; else pkill -f "m bookwyrm_voice" || true; fi
           sleep 3
-          repo="$GITHUB_WORKSPACE"
+          # Uninstall a copy of the program, so the checkout stays for the runner's own clean-up,
+          # and set the speech models aside so the cache can still save them.
+          repo="$RUNNER_TEMP/bookwyrm-copy"
+          cp -R "$GITHUB_WORKSPACE" "$repo"
+          [ -d "$HOME/.bookwyrm/models" ] && mv "$HOME/.bookwyrm/models" "$RUNNER_TEMP/models-aside"
           node "$repo/setup/dist/setup.mjs" --uninstall --yes
           sleep 10   # Windows removes the last folders once the uninstaller has exited
           left=""
           for p in "$repo" "$HOME/.bookwyrm"; do [ -e "$p" ] && left="$left $p"; done
           if [ "$RUNNER_OS" = macOS ]; then [ -e "$HOME/Applications/Bookwyrm.app" ] && left="$left Bookwyrm.app"; fi
           if [ "$RUNNER_OS" = Windows ]; then [ -e "$APPDATA/Microsoft/Windows/Start Menu/Programs/Bookwyrm.lnk" ] && left="$left Bookwyrm.lnk"; fi
+          if [ -d "$RUNNER_TEMP/models-aside" ]; then mkdir -p "$HOME/.bookwyrm" && mv "$RUNNER_TEMP/models-aside" "$HOME/.bookwyrm/models"; fi
           if [ -n "$left" ]; then echo "left behind:$left"; exit 1; fi
           echo "nothing left behind"
 

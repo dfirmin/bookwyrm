@@ -30,6 +30,8 @@ export const REGISTRY_FILES = ['targets.yaml', 'targets.yml'];
  */
 export function registrySource(spec) {
   const s = String(spec || DEFAULT_REGISTRY).trim();
+  const link = githubLink(s);
+  if (link) return registrySource(link);
   if (/^https?:\/\//.test(s)) return { label: s, url: s };
   const m = /^([\w.-]+\/[\w.-]+)(?:@([\w./-]+?))?(?::([\w./-]+\.ya?ml))?$/.exec(s);
   if (!m) {
@@ -39,6 +41,43 @@ export function registrySource(spec) {
   const paths = path ? [path.replace(/^\/+/, '')] : REGISTRY_FILES;
   const label = `${repo}${ref === 'main' ? '' : `@${ref}`}${path ? `:${paths[0]}` : ''}`;
   return { label, repo, ref, paths, url: `https://raw.githubusercontent.com/${repo}/${ref}/${paths[0]}` };
+}
+
+/**
+ * A github.com link someone copied from the browser → the owner/repo[@ref][:path] form, or null.
+ *   https://github.com/acme/archivist(.git)                       → acme/archivist
+ *   https://github.com/acme/archivist/tree/dev                    → acme/archivist@dev
+ *   https://github.com/acme/archivist/blob/main/targets.yml       → acme/archivist:targets.yml
+ *   https://github.com/acme/archivist/blob/dev/config/targets.yml → acme/archivist@dev:config/targets.yml
+ *   https://raw.githubusercontent.com/acme/archivist/main/targets.yml → acme/archivist:targets.yml
+ * (A branch with "/" in its name can't be told apart from the path in a link; use the
+ * owner/repo@branch:path form for those.)
+ */
+export function githubLink(spec) {
+  let u;
+  try { u = new URL(spec); } catch { return null; }
+  const parts = decodeURIComponent(u.pathname).replace(/\.git$/, '').split('/').filter(Boolean);
+  let repo;
+  let ref;
+  let file;
+  if (u.hostname === 'github.com' || u.hostname === 'www.github.com') {
+    if (parts.length < 2) return null;
+    repo = `${parts[0]}/${parts[1]}`;
+    if (parts.length === 2) return repo;
+    if (!['blob', 'tree', 'raw'].includes(parts[2]) || parts.length < 4) return null;
+    ref = parts[3];
+    file = parts.slice(4).join('/');
+  } else if (u.hostname === 'raw.githubusercontent.com') {
+    if (parts.length < 4) return null;
+    repo = `${parts[0]}/${parts[1]}`;
+    ref = parts[2];
+    file = parts.slice(3).join('/');
+  } else {
+    return null;
+  }
+  if (file && !/\.ya?ml$/.test(file)) file = '';        // a folder: look for the usual names in it?
+  const at = ref && ref !== 'main' ? `@${ref}` : '';
+  return `${repo}${at}${file ? `:${file}` : ''}`;
 }
 
 /** "https://github.com/o/r(.git)" → "o/r", or null if it isn't an https GitHub repo URL. */
@@ -129,6 +168,9 @@ export async function loadRegistry(spec, token) {
     throw new RegistryError(`GitHub wouldn't let your token read the registry in ${src.repo || src.label} (status ${r.status}). Give the token Contents: read on that repo.`);
   }
   if (r.status !== 200) throw new RegistryError(`The Archivist registry (${src.label}) answered with status ${r.status}.`);
+  if (/^\s*<(!doctype|html)/i.test(r.text)) {
+    throw new RegistryError(`${src.label} is a web page, not the registry file. Give the registry as owner/repo (for example your-org/archivist), with @branch or :path/to/targets.yml if needed.`);
+  }
   const label = src.paths && !src.label.includes(':') && found !== REGISTRY_FILES[0] ? `${src.label}:${found}` : src.label;
   return { source: label, ...parseRegistry(r.text) };
 }

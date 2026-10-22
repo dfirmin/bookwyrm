@@ -50,6 +50,7 @@ async function withFakeGitHub(fn, { registryDown = false } = {}) {
       return u.endsWith('/dfirmin/archivist/main/targets.yaml') ? reply(200, REGISTRY_YAML) : reply(404, '404: Not Found');
     }
     // A company's private Archivist: raw.githubusercontent.com says 404; the API serves it to a token.
+    if (u === 'https://example.org/registry') return reply(200, '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>GitHub</title>\n</head>\n<body>sign in</body></html>');
     const priv = /^https:\/\/api\.github\.com\/repos\/acme\/archivist-internal\/contents\/(.+)\?ref=(.+)$/.exec(u);
     if (priv) {
       if (!init?.headers?.Authorization) return reply(404, { message: 'Not Found' });
@@ -324,6 +325,19 @@ test('registry: parsing follows Archivist\'s rules; bad entries are reported, no
   const sub = registry.registrySource('acme/archivist@v2.1:config/targets.yml');
   assert.deepEqual([sub.ref, sub.paths, sub.label], ['v2.1', ['config/targets.yml'], 'acme/archivist@v2.1:config/targets.yml']);
   assert.equal(registry.registrySource('acme/archivist:targets.yml').ref, 'main');
+  // Links copied from the browser.
+  const link = (u) => registry.githubLink(u);
+  assert.equal(link('https://github.com/acme/archivist'), 'acme/archivist');
+  assert.equal(link('https://github.com/acme/archivist.git'), 'acme/archivist');
+  assert.equal(link('https://github.com/acme/archivist/'), 'acme/archivist');
+  assert.equal(link('https://github.com/acme/archivist/tree/main'), 'acme/archivist');
+  assert.equal(link('https://github.com/acme/archivist/tree/dev'), 'acme/archivist@dev');
+  assert.equal(link('https://github.com/acme/archivist/blob/main/targets.yml'), 'acme/archivist:targets.yml');
+  assert.equal(link('https://github.com/acme/archivist/blob/dev/config/targets.yml'), 'acme/archivist@dev:config/targets.yml');
+  assert.equal(link('https://raw.githubusercontent.com/acme/archivist/main/targets.yaml'), 'acme/archivist:targets.yaml');
+  assert.equal(link('https://example.com/targets.yaml'), null);
+  assert.equal(registry.registrySource('https://github.com/acme/archivist/blob/main/targets.yml').label, 'acme/archivist:targets.yml');
+  assert.equal(registry.registrySource('https://example.com/targets.yaml').url, 'https://example.com/targets.yaml');
   assert.throws(() => registry.registrySource('not a repo'), /owner\/repo/);
   assert.throws(() => registry.parseRegistry('targets: []'), /no targets/);
 });
@@ -374,6 +388,11 @@ test('registry: a company\'s private Archivist, with targets.yml or a file elsew
   // No token, or one that can't read it: say what to do about it.
   await assert.rejects(registry.loadRegistry('acme/archivist-internal', ''), /Couldn't find targets\.yaml or targets\.yml in acme\/archivist-internal\. If that repo is private, your GitHub token needs read access/);
   await assert.rejects(registry.loadRegistry('acme/archivist-internal:nope.yml', 't'), /Couldn't find nope\.yml/);
+  // Pasted as a browser link, it's read the same way (through the API, with the token).
+  const pasted = await registry.loadRegistry('https://github.com/acme/archivist-internal/blob/main/targets.yml', 't');
+  assert.equal(pasted.source, 'acme/archivist-internal:targets.yml');
+  // A URL that serves a web page says so instead of a YAML error.
+  await assert.rejects(registry.loadRegistry('https://example.org/registry', 't'), /is a web page, not the registry file/);
   // The whole flow works against it.
   const v = await registry.validateTarget('o/n', { registry: 'acme/archivist-internal', token: 't' });
   assert.equal(v.ok, true, v.message);

@@ -12,6 +12,11 @@ app.commandLine.appendSwitch("use-fake-ui-for-media-stream");
 app.commandLine.appendSwitch("use-fake-device-for-media-stream");
 app.commandLine.appendSwitch("use-file-for-fake-audio-capture", path.resolve(wav));
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+// As app/main.js starts Chromium (calls over 127.0.0.1); BOOKWYRM_E2E_NO_LOOPBACK=1 leaves it out.
+if (!process.env.BOOKWYRM_E2E_NO_LOOPBACK) {
+  app.commandLine.appendSwitch("allow-loopback-in-peer-connection");
+  app.commandLine.appendSwitch("disable-features", "WebRtcHideLocalIpsWithMdns");
+}
 
 const VOICE = "http://127.0.0.1:7865";
 ipcMain.handle("voice:url", () => VOICE);

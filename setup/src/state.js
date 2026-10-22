@@ -38,6 +38,8 @@ export const HELP = `Bookwyrm setup
                          which voice to install (default auto: the most natural one this computer
                          can run; kokoro skips the natural voice and its 1 to 3 GB download)
   --github-mcp-bin PATH  use this GitHub MCP server binary instead of downloading one
+  --uninstall            remove Bookwyrm from this computer (asks first; with --yes it doesn't,
+                         with --dry-run it only lists what it would remove)
   --profile NAME         Hermes profile name (default bookwyrm)
   --plain                plain text output, no animations
   --help
@@ -81,6 +83,7 @@ export function parseArgs(argv) {
       case '--registry': opts.registry = take(i++, a); break;
       case '--show-test-targets': opts.showTest = true; break;
       case '--targets-json': opts.targetsJson = true; break;
+      case '--uninstall': opts.uninstall = true; break;
       case '--github-mcp-bin': opts.githubMcpBin = take(i++, a); break;
       case '--voice-engine': {
         const v = take(i++, a).toLowerCase();

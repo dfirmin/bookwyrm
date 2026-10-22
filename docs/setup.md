@@ -173,11 +173,28 @@ or `~\bookwyrm\install.ps1 --dry-run` on Windows.
 
 ## Removing Bookwyrm
 
-1. Quit Bookwyrm, and switch off Settings → *Open Bookwyrm when I log in*.
-2. Delete the app shortcut: `~/Applications/Bookwyrm.app` on a Mac, or *Bookwyrm* in the Start
-   menu folder on Windows (`%APPDATA%\Microsoft\Windows\Start Menu\Programs`).
-3. Delete the two Bookwyrm folders: `~/bookwyrm` (the program) and `~/.bookwyrm` (settings,
-   history, speech models).
-4. Remove Bookwyrm's Hermes profile, keys included: `hermes profile delete bookwyrm`. If you
-   don't use Hermes for anything else, uninstall Hermes too (see its README).
-5. Revoke the GitHub token and the Anthropic key on their websites.
+Quit Bookwyrm first (the robot's menu → **Quit Bookwyrm**), then:
+
+- **macOS or Linux:** `~/bookwyrm/uninstall.sh`
+- **Windows** (PowerShell): `& "$env:USERPROFILE\bookwyrm\uninstall.ps1"`
+
+It lists exactly what it will remove and asks before doing anything. Add `--dry-run` to only see the list, or `--yes` not to be asked. It removes:
+
+- the app shortcut and "open at login";
+- Bookwyrm's Hermes profile, with its keys and memory;
+- Hermes' background service, but only if no other Hermes profile uses it;
+- `~/.bookwyrm`: settings, conversation history, the copy of the knowledge repo, speech models;
+- `~/bookwyrm`: the program. If it's a git clone with uncommitted or unpushed changes, it's kept.
+
+It leaves Hermes itself, uv, and everything on GitHub. Last, on the web, revoke the GitHub token you made for Bookwyrm, and the Anthropic or gateway key if it was only for Bookwyrm.
+
+By hand, if the uninstaller can't run:
+
+1. Switch off Settings → *Open Bookwyrm when I log in*, and quit Bookwyrm.
+2. `hermes gateway stop` (only if you don't use Hermes for anything else), and delete Bookwyrm's
+   Hermes profile folder, `~/.hermes/profiles/bookwyrm` (`%LOCALAPPDATA%\hermes\profiles\bookwyrm`
+   on Windows).
+3. Delete `~/Applications/Bookwyrm.app` on a Mac, or *Bookwyrm* in the Start menu folder on Windows
+   (`%APPDATA%\Microsoft\Windows\Start Menu\Programs`, and its `Startup` folder).
+4. Delete `~/bookwyrm` and `~/.bookwyrm`.
+5. Revoke the keys on the web, as above.

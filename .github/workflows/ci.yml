@@ -135,6 +135,26 @@ jobs:
           name: screenshots-${{ runner.os }}
           path: ${{ runner.temp }}/shots
 
+      # Last: remove it all again, the way a person would, and check nothing is left behind.
+      - name: Uninstall
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -o pipefail
+          exec > >(tee "$RUNNER_TEMP/uninstall.log") 2>&1
+          # The voice service started above is still running; quit it as the app would.
+          if [ "$RUNNER_OS" = Windows ]; then taskkill //F //IM python.exe >/dev/null 2>&1 || true; else pkill -f "m bookwyrm_voice" || true; fi
+          sleep 3
+          repo="$GITHUB_WORKSPACE"
+          node "$repo/setup/dist/setup.mjs" --uninstall --yes
+          sleep 10   # Windows removes the last folders once the uninstaller has exited
+          left=""
+          for p in "$repo" "$HOME/.bookwyrm"; do [ -e "$p" ] && left="$left $p"; done
+          if [ "$RUNNER_OS" = macOS ]; then [ -e "$HOME/Applications/Bookwyrm.app" ] && left="$left Bookwyrm.app"; fi
+          if [ "$RUNNER_OS" = Windows ]; then [ -e "$APPDATA/Microsoft/Windows/Start Menu/Programs/Bookwyrm.lnk" ] && left="$left Bookwyrm.lnk"; fi
+          if [ -n "$left" ]; then echo "left behind:$left"; exit 1; fi
+          echo "nothing left behind"
+
       # Show why it failed in the run's annotations (readable without opening the full log).
       - name: Report failure
         if: failure()

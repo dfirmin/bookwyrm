@@ -18,6 +18,14 @@ const os = require("node:os");
 const path = require("node:path");
 const launcher = require("./launcher.js");
 
+// Calls are between this app and the voice service on the same computer. Let WebRTC use
+// 127.0.0.1 for them (Chromium leaves loopback out by default), so a VPN or firewall that drops UDP
+// on the network addresses can't silence the call; the voice service offers 127.0.0.1 too
+// (voice/bookwyrm_voice/loopback.py). And don't hide this machine's addresses behind mDNS names:
+// resolving those needs multicast, which company networks often block.
+app.commandLine.appendSwitch("allow-loopback-in-peer-connection");
+app.commandLine.appendSwitch("disable-features", "WebRtcHideLocalIpsWithMdns");
+
 const IS_MAC = process.platform === "darwin";
 const IS_WIN = process.platform === "win32";
 const VOICE_URL = process.env.BOOKWYRM_VOICE_URL || "http://127.0.0.1:7865";

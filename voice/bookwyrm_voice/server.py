@@ -67,6 +67,7 @@ from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
 from . import hardware
+from .loopback import allow_loopback
 from .config import EDITABLE, Settings, data_dir, load_settings, save_settings
 from .history import History, context_text
 from .models import download_size, engine_present
@@ -77,6 +78,7 @@ from .workspace import (
     Workspace, WorkspaceError, agent_context, apply_preserving, clean_path, gap_info, new_conversation_id,
 )
 
+allow_loopback()   # calls connect over 127.0.0.1, whatever the VPN or firewall does
 _settings: Settings = load_settings()
 state: dict = {"engines": None, "watcher": None, "loading": True, "error": None, "history": None,
                "switching": False, "workspace": None, "gaps_cache": None}

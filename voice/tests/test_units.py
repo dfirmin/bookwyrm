@@ -48,6 +48,17 @@ ECHO_CASES = [
 ]
 
 
+def test_calls_offer_loopback():
+    """Calls connect over 127.0.0.1 so a VPN can't silence them (loopback.py)."""
+    import aioice.ice
+    from bookwyrm_voice.loopback import allow_loopback
+    allow_loopback()
+    allow_loopback()   # twice is fine
+    v4 = aioice.ice.get_host_addresses(True, False)
+    assert v4[0] == "127.0.0.1" and v4.count("127.0.0.1") == 1, v4
+    assert "127.0.0.1" not in aioice.ice.get_host_addresses(False, True)
+
+
 def test_echo_guard():
     log = SpokenLog()
     for s in SAID:
@@ -250,6 +261,7 @@ def test_engine_downloads():
 
 
 if __name__ == "__main__":
+    test_calls_offer_loopback()
     test_echo_guard()
     test_watcher()
     test_history()
@@ -258,5 +270,5 @@ if __name__ == "__main__":
     test_hardware_detect()
     test_chatterbox_voices()
     test_engine_downloads()
-    print("ok: echo guard (15 cases), watcher (4 checks), history, sound tags, engine choice (13 machines), "
+    print("ok: calls over loopback, echo guard (15 cases), watcher (4 checks), history, sound tags, engine choice (13 machines), "
           "hardware detection, Chatterbox voices, engine downloads")

@@ -56,3 +56,15 @@ Archivist already says which repos are its own, in two places:
   on each knowledge repo, are what actually limit what it can change.
 - A repo has to be onboarded to Archivist (scaffolded, then registered) before anyone can point
   Bookwyrm at it. That's the intended order.
+
+## Addendum, 2026-10-22: company registries
+
+Companies run their own Archivist, with their own registry. The registry can be:
+- `owner/repo`, where Bookwyrm reads `targets.yaml`, or `targets.yml` if that's what the repo has;
+- `owner/repo@branch`;
+- `owner/repo:path/to/targets.yml`, for a file outside the root;
+- a URL.
+
+It's chosen in **Settings → Knowledge repo → Archivist registry**: load it, pick a repo from it, then Switch. Nothing is saved until a repo is chosen. It can also be set with `--registry` or `BOOKWYRM_REGISTRY`, as before. Choosing the default again forgets the company one.
+
+A private registry is read through the GitHub API, so the token needs Contents: read on it as well as the knowledge repo. When it can't read it, Bookwyrm says exactly that. github.com only; GitHub Enterprise Server would also need a configurable host.

@@ -121,7 +121,8 @@ an issue.
   - your name and team;
   - how Bookwyrm reaches Claude: Anthropic directly or your company's gateway (**Save and check**
     tests a change before Bookwyrm uses it);
-  - the knowledge repo, picked from Archivist's registry, and the GitHub token (changing these
+  - the Archivist registry (your company's own Archivist, if it has one), the knowledge repo
+    picked from it, and the GitHub token (changing these
     re-runs the relevant setup steps for you);
   - Bookwyrm's voice (press **Play** to hear one) and its speaking speed;
   - calls from Bookwyrm;
@@ -158,7 +159,8 @@ The card and Settings → *Voice service* say what's wrong.
 | "I can't reach the repo", the toolbar says *Can't reach GitHub*, or Gaps shows a GitHub error | The token has expired or doesn't cover the repo. Settings → GitHub token → **Replace…** |
 | Bookwyrm can't answer anything | Settings → Model: check the Anthropic key, or the gateway address, model name and key. **Save and check** tests them |
 | An approved change stays an open pull request | `main` is protected and you aren't on its bypass list. Ask a repo admin to add you, or a reviewer to merge it |
-| My knowledge repo isn't in the list | Bookwyrm only looks after repos in Archivist's registry. Ask the Archivist owners to add it to `targets.yaml` (a pull request), then pick it in Settings → Knowledge repo |
+| My knowledge repo isn't in the list | Bookwyrm only looks after repos in Archivist's registry. If your company runs its own Archivist, point Bookwyrm at it: Settings → Knowledge repo → Archivist registry → **Change…**, type its repo (for example `your-org/archivist`, or `your-org/archivist:config/targets.yml`), **Load**, pick the repo, **Switch**. Otherwise ask the Archivist owners to add it to the registry (a pull request) |
+| "Couldn't find targets.yaml or targets.yml" for my company's registry | The registry repo is private and your token can't read it. Edit the token on GitHub and add that repo with Contents: read |
 | A repo in the list says your token can't reach it | Make a fine-grained GitHub token that includes that repo, and save it in Settings → GitHub token |
 | Gaps says the repo is no longer an active target | It's been retired in the registry. Choose another in Settings → Knowledge repo |
 | Using a gateway: answers stop off the company network | The gateway is only reachable on the network or VPN. Speech still works; thinking needs the gateway |

@@ -174,6 +174,17 @@
           <h2>Knowledge repo</h2>
           <div class="group">
             <div class="row">
+              <span>Archivist registry<small>Where the list of knowledge repos comes from</small></span>
+              <div class="control">
+                <span class="key-status" id="registry-current"></span>
+                <button type="button" class="button small" id="registry-change">Change…</button>
+              </div>
+            </div>
+            <div class="row key-entry" id="registry-entry" hidden>
+              <input id="registry-input" placeholder="your-org/archivist  or  your-org/archivist:path/targets.yml" spellcheck="false" />
+              <button type="button" class="button small primary" id="registry-load">Load</button>
+            </div>
+            <div class="row">
               <span>Repository<small id="repo-source">From the Archivist registry</small></span>
               <div class="control">
                 <select name="repo" id="repo"><option value="">Loading…</option></select>
@@ -197,7 +208,7 @@
             </div>
           </div>
           <p class="hint" id="repo-note" hidden></p>
-          <p class="hint">Bookwyrm looks after repos Archivist runs on: the active targets in its registry. To add one, open a pull request to the registry's targets.yaml. The GitHub token should be fine-grained and cover only this repository: Contents, Issues and Pull requests, read and write. Keys are stored in Bookwyrm's Hermes profile on this computer, never in Bookwyrm's own settings.</p>
+          <p class="hint">Bookwyrm looks after repos Archivist runs on: the active targets in its registry. Using your company's own Archivist? Change the registry to its repo (owner/name); Bookwyrm reads targets.yaml or targets.yml there, and you can add @branch or :path/to/file. If that repo is private, the token also needs Contents: read on it. To add a knowledge repo, open a pull request to the registry's targets file. The GitHub token should be fine-grained and cover only this repository: Contents, Issues and Pull requests, read and write. Keys are stored in Bookwyrm's Hermes profile on this computer, never in Bookwyrm's own settings.</p>
           <pre class="setup-log" id="setup-log" hidden></pre>
 
           <h2>Voice</h2>

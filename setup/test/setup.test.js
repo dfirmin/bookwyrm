@@ -42,12 +42,20 @@ const REPOS = {
 };
 async function withFakeGitHub(fn, { registryDown = false } = {}) {
   const real = globalThis.fetch;
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, init) => {
     const u = String(url);
     const reply = (status, body) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
     if (u.startsWith('https://raw.githubusercontent.com/')) {
       if (registryDown) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } });
       return u.endsWith('/dfirmin/archivist/main/targets.yaml') ? reply(200, REGISTRY_YAML) : reply(404, '404: Not Found');
+    }
+    // A company's private Archivist: raw.githubusercontent.com says 404; the API serves it to a token.
+    const priv = /^https:\/\/api\.github\.com\/repos\/acme\/archivist-internal\/contents\/(.+)\?ref=(.+)$/.exec(u);
+    if (priv) {
+      if (!init?.headers?.Authorization) return reply(404, { message: 'Not Found' });
+      const files = { 'targets.yml@main': REGISTRY_YAML, 'config/kb-targets.yaml@release': REGISTRY_YAML };
+      const body = files[`${priv[1]}@${decodeURIComponent(priv[2])}`];
+      return body ? reply(200, body) : reply(404, { message: 'Not Found' });
     }
     const m = /^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)(\/contents\/contracts\/target\.yaml)?$/.exec(u);
     if (m) {
@@ -312,6 +320,10 @@ test('registry: parsing follows Archivist\'s rules; bad entries are reported, no
   assert.equal(registry.githubSlug('http://github.com/o/n'), null);
   assert.equal(registry.githubSlug('https://gitlab.com/o/n'), null);
   assert.deepEqual(registry.registrySource('acme/archivist@release').url, 'https://raw.githubusercontent.com/acme/archivist/release/targets.yaml');
+  assert.deepEqual(registry.registrySource('acme/archivist').paths, ['targets.yaml', 'targets.yml']);
+  const sub = registry.registrySource('acme/archivist@v2.1:config/targets.yml');
+  assert.deepEqual([sub.ref, sub.paths, sub.label], ['v2.1', ['config/targets.yml'], 'acme/archivist@v2.1:config/targets.yml']);
+  assert.equal(registry.registrySource('acme/archivist:targets.yml').ref, 'main');
   assert.throws(() => registry.registrySource('not a repo'), /owner\/repo/);
   assert.throws(() => registry.parseRegistry('targets: []'), /no targets/);
 });
@@ -351,6 +363,20 @@ test('registry: the picker lists active targets; test targets only on request or
   assert.ok(slugs(await registry.listTargets({ token: 't', showTest: true })).includes('kb-test'));
   assert.ok(slugs(await registry.listTargets({ token: 't', current: 'o/kb-test' })).includes('kb-test'));
   assert.ok(!slugs(await registry.listTargets({ token: 't', current: 'o/old-kb' })).includes('nope'));
+}));
+
+test('registry: a company\'s private Archivist, with targets.yml or a file elsewhere', () => withFakeGitHub(async () => {
+  const yml = await registry.loadRegistry('acme/archivist-internal', 't');
+  assert.equal(yml.source, 'acme/archivist-internal:targets.yml');
+  assert.equal(yml.targets.length, 7);
+  const elsewhere = await registry.loadRegistry('acme/archivist-internal@release:config/kb-targets.yaml', 't');
+  assert.equal(elsewhere.source, 'acme/archivist-internal@release:config/kb-targets.yaml');
+  // No token, or one that can't read it: say what to do about it.
+  await assert.rejects(registry.loadRegistry('acme/archivist-internal', ''), /Couldn't find targets\.yaml or targets\.yml in acme\/archivist-internal\. If that repo is private, your GitHub token needs read access/);
+  await assert.rejects(registry.loadRegistry('acme/archivist-internal:nope.yml', 't'), /Couldn't find nope\.yml/);
+  // The whole flow works against it.
+  const v = await registry.validateTarget('o/n', { registry: 'acme/archivist-internal', token: 't' });
+  assert.equal(v.ok, true, v.message);
 }));
 
 test('profile step refuses a repo Archivist doesn\'t run on, and writes nothing', () => withFakeGitHub(async () => {

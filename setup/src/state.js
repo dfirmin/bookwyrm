@@ -19,7 +19,7 @@ export const HELP = `Bookwyrm setup
   --name "Dee Firmin"    your name            --team "Data Engineering"   your team
   --repo owner/name      the knowledge repo (must be an active target in the Archivist registry)
   --caller "Name, Team"  name and team in one
-  --registry owner/repo[@branch]
+  --registry owner/repo[@branch][:path] or a GitHub link
                          the Archivist registry to check repos against (default dfirmin/archivist;
                          or BOOKWYRM_REGISTRY, or "registry" in settings.json)
   --show-test-targets    list the registry's test targets in the repo picker too

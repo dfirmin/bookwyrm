@@ -23,7 +23,8 @@ ipcMain.handle("app:info", () => ({ log: "~/.bookwyrm/voice.log", platform: OS }
 // The real registry lookup, as main.js does it: the setup wizard under Electron's own Node.
 ipcMain.handle("targets:list", (_e, opts = {}) => new Promise((resolve) => {
   const { execFile } = require("node:child_process");
-  const args = [path.join(__dirname, "..", "..", "setup", "dist", "setup.mjs"), "--targets-json", ...(opts.showTest ? ["--show-test-targets"] : [])];
+  const args = [path.join(__dirname, "..", "..", "setup", "dist", "setup.mjs"), "--targets-json", ...(opts.showTest ? ["--show-test-targets"] : []),
+    ...(opts.registry ? ["--registry", String(opts.registry)] : [])];
   execFile(process.execPath, args, { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, (err, out) => {
     try { resolve(JSON.parse(out.trim().split("\n").pop())); } catch { resolve({ error: err?.message || "no output" }); }
   });
@@ -82,6 +83,7 @@ const WINDOW = {
   "window-settings-model": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{document.getElementById("settings-view").querySelector(".scroller").scrollTop=250},900)` },
   "window-settings-switch": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{const f=document.getElementById("settings"); f.provider.value="anthropic"; f.provider.dispatchEvent(new Event("change")); document.getElementById("settings-view").querySelector(".scroller").scrollTop=250},2500)` },
   "window-settings-repo": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{document.getElementById("settings-view").querySelector(".scroller").scrollTop=520},6000)` },
+  "window-settings-registry": { js: `document.getElementById("nav-settings").click(); setTimeout(()=>{document.getElementById("registry-change").click(); document.getElementById("registry-input").value="dfirmin/archivist@main"; document.getElementById("registry-load").click(); setTimeout(()=>document.getElementById("registry-current").scrollIntoView({block:"start"}),4000)},3500)` },
   "window-chat-dark": { dark: true, js: `document.querySelector('.conv')?.click()` },
 };
 
@@ -96,7 +98,9 @@ async function load(win, file) {
 app.whenReady().then(async () => {
   const prefs = { preload: path.join(__dirname, "..", "preload.js"), contextIsolation: true };
   let win = new BrowserWindow({ ...ROBOT, useContentSize: true, show: false, frame: false, webPreferences: prefs });
+  const only = process.env.BOOKWYRM_SHOTS ? new Set(process.env.BOOKWYRM_SHOTS.split(",")) : null;
   for (const [name, scene] of Object.entries(COMPANION)) {
+    if (only && !only.has(name)) continue;
     nativeTheme.themeSource = scene.dark ? "dark" : "light";
     win.setContentSize(scene.size.width, scene.size.height);
     await load(win, "index.html");
@@ -110,12 +114,13 @@ app.whenReady().then(async () => {
   }
   win.setContentSize(1240, 760);
   for (const [name, scene] of Object.entries(WINDOW)) {
+    if (only && !only.has(name)) continue;
     nativeTheme.themeSource = scene.dark ? "dark" : "light";
     await load(win, "window.html");
     await win.webContents.insertCSS(MATERIAL);
     await new Promise((r) => setTimeout(r, 1200));
     await win.webContents.executeJavaScript(scene.js);
-    await new Promise((r) => setTimeout(r, name.includes("repo") ? 8000 : /library|switch|knowledge|review|edit/.test(name) ? 4000 : 1500));
+    await new Promise((r) => setTimeout(r, /repo|registry/.test(name) ? 9000 : /library|switch|knowledge|review|edit/.test(name) ? 4000 : 1500));
     fs.writeFileSync(path.join(out, `${name}.png`), (await win.webContents.capturePage()).toPNG());
     console.log("shot", name);
   }

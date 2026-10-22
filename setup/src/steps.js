@@ -642,6 +642,8 @@ export function writeSettings(ctx) {
   const existing = readJson(paths.settings) || {};
   // Defaults only fill gaps; existing values (and keys we don't know) are kept.
   const merged = { name: '', team: '', repo: '', ...SETTINGS_DEFAULTS, profile: ctx.profile, ...existing, ...settingsPatch(ctx) };
+  // Switching back to the default registry forgets the company one.
+  if (ctx.answers.registry === DEFAULT_REGISTRY) delete merged.registry;
   fs.mkdirSync(path.dirname(paths.settings), { recursive: true });
   fs.writeFileSync(paths.settings, `${JSON.stringify(merged, null, 2)}\n`);
 }

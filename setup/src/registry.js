@@ -16,14 +16,29 @@ const GITHUB_HOSTS = new Set(['github.com', 'github.example.com']);
 
 export class RegistryError extends Error {}
 
-/** "owner/repo", "owner/repo@ref" or a full https URL to a targets.yaml → where to read it. */
+// What a registry file may be called, in the order they're tried. Archivist names it targets.yaml;
+// company forks often use .yml.
+export const REGISTRY_FILES = ['targets.yaml', 'targets.yml'];
+
+/**
+ * Where to read the registry, from:
+ *   "owner/repo"                  targets.yaml or targets.yml at the root of main
+ *   "owner/repo@ref"              …of that branch or tag
+ *   "owner/repo:path/targets.yml" a file elsewhere in the repo (with or without @ref)
+ *   "https://…"                   any URL that serves the file
+ * → { label, repo?, ref?, paths?, url? }.
+ */
 export function registrySource(spec) {
   const s = String(spec || DEFAULT_REGISTRY).trim();
   if (/^https?:\/\//.test(s)) return { label: s, url: s };
-  const m = /^([\w.-]+\/[\w.-]+)(?:@([\w./-]+))?$/.exec(s);
-  if (!m) throw new RegistryError(`The registry should be owner/repo (optionally @branch) or a URL, got "${s}".`);
-  const [, repo, ref = 'main'] = m;
-  return { label: ref === 'main' ? repo : `${repo}@${ref}`, repo, ref, url: `https://raw.githubusercontent.com/${repo}/${ref}/targets.yaml` };
+  const m = /^([\w.-]+\/[\w.-]+)(?:@([\w./-]+?))?(?::([\w./-]+\.ya?ml))?$/.exec(s);
+  if (!m) {
+    throw new RegistryError(`The registry should be owner/repo (optionally @branch, and :path/to/targets.yml for a file outside the root) or a URL, got "${s}".`);
+  }
+  const [, repo, ref = 'main', path] = m;
+  const paths = path ? [path.replace(/^\/+/, '')] : REGISTRY_FILES;
+  const label = `${repo}${ref === 'main' ? '' : `@${ref}`}${path ? `:${paths[0]}` : ''}`;
+  return { label, repo, ref, paths, url: `https://raw.githubusercontent.com/${repo}/${ref}/${paths[0]}` };
 }
 
 /** "https://github.com/o/r(.git)" → "o/r", or null if it isn't an https GitHub repo URL. */
@@ -80,25 +95,42 @@ async function fetchText(url, headers = {}, timeoutMs = 15000) {
 }
 
 /**
- * Read the registry. Public registries come straight from raw.githubusercontent.com; a private one
- * is read through the GitHub API with the token (which then needs read access to it).
+ * Read the registry. A public one comes straight from raw.githubusercontent.com; a private one (a
+ * company's own Archivist, say) through the GitHub API with the token, which then needs read access
+ * to that repo too. Each candidate file name is tried in turn (targets.yaml, then targets.yml).
  */
 export async function loadRegistry(spec, token) {
   const src = registrySource(spec);
+  const api = (path) => fetchText(`https://api.github.com/repos/${src.repo}/contents/${path}?ref=${encodeURIComponent(src.ref)}`, {
+    Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.raw+json', 'X-GitHub-Api-Version': '2022-11-28',
+  });
   let r;
+  let found = null;
   try {
-    r = await fetchText(src.url);
-    if (r.status === 404 && src.repo && token) {
-      r = await fetchText(`https://api.github.com/repos/${src.repo}/contents/targets.yaml?ref=${encodeURIComponent(src.ref)}`, {
-        Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.raw+json', 'X-GitHub-Api-Version': '2022-11-28',
-      });
+    if (src.paths) {
+      for (const path of src.paths) {
+        r = await fetchText(`https://raw.githubusercontent.com/${src.repo}/${src.ref}/${path}`);
+        if (r.status === 404 && token) r = await api(path);
+        if (r.status !== 404) { found = path; break; }
+      }
+    } else {
+      r = await fetchText(src.url);
     }
   } catch (err) {
     throw new RegistryError(`Couldn't reach the Archivist registry (${src.label}): ${err.cause?.code || err.message}.`);
   }
-  if (r.status === 404) throw new RegistryError(`There's no targets.yaml in ${src.label}, or it's private and your token can't read it.`);
+  if (r.status === 404) {
+    const names = (src.paths || ['the file']).join(' or ');
+    throw new RegistryError(src.repo
+      ? `Couldn't find ${names} in ${src.repo}${src.ref === 'main' ? '' : ` (${src.ref})`}. If that repo is private, your GitHub token needs read access to it as well as to the knowledge repo (Contents: read).`
+      : `There's no registry at ${src.label}.`);
+  }
+  if (r.status === 401 || r.status === 403) {
+    throw new RegistryError(`GitHub wouldn't let your token read the registry in ${src.repo || src.label} (status ${r.status}). Give the token Contents: read on that repo.`);
+  }
   if (r.status !== 200) throw new RegistryError(`The Archivist registry (${src.label}) answered with status ${r.status}.`);
-  return { source: src.label, ...parseRegistry(r.text) };
+  const label = src.paths && !src.label.includes(':') && found !== REGISTRY_FILES[0] ? `${src.label}:${found}` : src.label;
+  return { source: label, ...parseRegistry(r.text) };
 }
 
 const gh = (token) => ({
@@ -176,7 +208,7 @@ export async function validateTarget(repo, { registry, token, keepIfUnreachable 
   if (!target) {
     return {
       ok: false,
-      message: `${repo} isn't in the Archivist registry (${reg.source}). Bookwyrm only looks after repos Archivist runs on; to add one, open a pull request adding it to targets.yaml.`,
+      message: `${repo} isn't in the Archivist registry (${reg.source}). Bookwyrm only looks after repos Archivist runs on; to add one, open a pull request adding it to the registry's targets file.`,
     };
   }
   if (!target.active) {

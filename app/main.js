@@ -468,6 +468,7 @@ ipcMain.handle("setup:apply", (e, changes = {}) => new Promise((resolve) => {
   }
   const args = [SETUP_SCRIPT, "--yes", "--plain", "--only", "profile,api,check,settings", "--no-open"];
   if (changes.repo) args.push("--repo", changes.repo);
+  if (changes.registry) args.push("--registry", changes.registry);
   if (changes.provider) args.push("--provider", changes.provider);
   if (changes.provider === "gateway") args.push("--gateway-url", changes.gatewayUrl, "--gateway-model", changes.gatewayModel);
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
@@ -497,7 +498,8 @@ ipcMain.handle("targets:list", (_e, opts = {}) => new Promise((resolve) => {
     resolve({ error: "The setup wizard isn't installed here. Run the Bookwyrm installer again." });
     return;
   }
-  const args = [SETUP_SCRIPT, "--targets-json", ...(opts.showTest ? ["--show-test-targets"] : [])];
+  const args = [SETUP_SCRIPT, "--targets-json", ...(opts.showTest ? ["--show-test-targets"] : []),
+    ...(opts.registry ? ["--registry", String(opts.registry)] : [])];
   const child = spawn(process.execPath, args, { cwd: REPO_DIR, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, windowsHide: true });
   let out = "";
   child.stdout.on("data", (b) => { out += b; });

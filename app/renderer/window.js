@@ -808,15 +808,30 @@ function applyModel(newKey = null) {
 
 const ACCESS_NOTE = { none: "token can't reach it", read: "read-only for your token" };
 let targets = null;
+let registryDraft = null;   // a registry typed in Settings, not saved until a repo from it is chosen
 
 async function loadTargets() {
   const sel = $("repo");
   const note = $("repo-note");
   sel.disabled = true;
   sel.replaceChildren(new Option("Reading the Archivist registry…", ""));
-  targets = await bw.targets({ showTest: $("show-test").checked });
+  targets = await bw.targets({ showTest: $("show-test").checked, ...(registryDraft ? { registry: registryDraft } : {}) });
+  $("registry-current").textContent = registryDraft ? `${registryDraft} (not saved yet)` : (targets.registry || "");
+  $("registry-current").className = "key-status ok";
   sel.replaceChildren();
   note.hidden = true;
+  if (targets.error && registryDraft) {
+    // The registry just typed can't be read: say why, and go back to the saved one.
+    note.textContent = targets.error;
+    note.hidden = false;
+    registryDraft = null;
+    $("registry-entry").hidden = false;
+    const keep = note.textContent;
+    await loadTargets();
+    note.textContent = keep;
+    note.hidden = false;
+    return;
+  }
   if (targets.error) {
     // Can't read the registry: keep showing the saved repo; switching waits until it can be checked.
     if (settings?.repo) sel.append(new Option(settings.repo, settings.repo));
@@ -833,23 +848,50 @@ async function loadTargets() {
     o.disabled = t.access === "none" || t.access === "read";
     sel.append(o);
   }
-  if (settings?.repo && !targets.targets.some((t) => t.repo === settings.repo)) {
-    sel.append(new Option(`${settings.repo} (not an active target)`, settings.repo));
+  if (registryDraft) {
+    // A new registry: nothing is chosen until the person picks one of its repos.
+    sel.prepend(new Option(targets.targets.length ? "Choose a repo from this registry…" : "No active repos in this registry", ""));
+    sel.value = "";
+  } else {
+    if (settings?.repo && !targets.targets.some((t) => t.repo === settings.repo)) {
+      sel.append(new Option(`${settings.repo} (not an active target)`, settings.repo));
+    }
+    sel.value = settings?.repo || "";
   }
-  sel.value = settings?.repo || "";
   sel.disabled = false;
   $("show-test-row").hidden = !(targets.hiddenTest || $("show-test").checked);
   if (targets.current && !targets.current.ok) { note.textContent = targets.current.message; note.hidden = false; }
   $("repo-apply").hidden = true;
 }
 
-form.repo.addEventListener("change", () => { $("repo-apply").hidden = !form.repo.value || form.repo.value === settings?.repo; });
+form.repo.addEventListener("change", () => {
+  $("repo-apply").hidden = !form.repo.value || (form.repo.value === settings?.repo && !registryDraft);
+});
 $("show-test").addEventListener("change", loadTargets);
 $("repo-apply").addEventListener("click", () => {
   const repo = form.repo.value;
   const t = targets?.targets?.find((x) => x.repo === repo);
-  applySetup({ repo }, `Switching Bookwyrm to ${t ? t.name : repo}…`);
+  const registry = registryDraft;
+  registryDraft = null;
+  applySetup({ repo, ...(registry ? { registry } : {}) },
+    `Switching Bookwyrm to ${t ? t.name : repo}${registry ? `, from the registry in ${registry}` : ""}…`);
 });
+$("registry-change").addEventListener("click", () => {
+  const entry = $("registry-entry");
+  entry.hidden = !entry.hidden;
+  $("registry-input").value = registryDraft || targets?.registry || "";
+  $("registry-input").focus();
+});
+async function loadRegistryDraft() {
+  const value = $("registry-input").value.trim();
+  if (!value || value === targets?.registry) { $("registry-entry").hidden = true; return; }
+  registryDraft = value;
+  $("registry-entry").hidden = true;
+  await loadTargets();
+  if (registryDraft) saved(`Read ${registryDraft}. Choose a repo from it, then Switch.`);
+}
+$("registry-load").addEventListener("click", loadRegistryDraft);
+$("registry-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); loadRegistryDraft(); } });
 for (const row of form.querySelectorAll("[data-key]")) {
   const entry = form.querySelector(`[data-entry="${row.dataset.key}"]`);
   row.querySelector(".replace").addEventListener("click", () => { entry.hidden = !entry.hidden; entry.querySelector("input").focus(); });
@@ -971,15 +1013,17 @@ bw.onShow((opts) => route(opts));
 (async () => {
   await applyOs();
   voiceUrl = await bw.voiceUrl();
-  try {
-    const s = await api("/api/settings");
+  initDoc({ api, json, toast, onAsk: askAbout, onChanges: refreshChanges, voiceUrl: () => voiceUrl });
+  // Show the page asked for straight away; the greeting and history fill in as the service answers
+  // (on a slow or cold machine that can take a few seconds).
+  route(Object.fromEntries(new URLSearchParams(location.search)));
+  api("/api/settings").then((s) => {
     const first = s.name.split(" ")[0];
     if (first) $("empty-greeting").textContent = `What do you need, ${first}?`;
     if (s.repo) $("empty-repo").textContent = `Ask about ${s.repo}, or tell Bookwyrm something it should know.`;
-  } catch {}
-  initDoc({ api, json, toast, onAsk: askAbout, onChanges: refreshChanges, voiceUrl: () => voiceUrl });
+  }).catch(() => {});
   await loadHistory();
-  route(Object.fromEntries(new URLSearchParams(location.search)));
+  if (view === "chat" && conv) $("view-title").textContent = titleOf(conv);
   refreshBadge();
   refreshStatus();
   refreshChanges();

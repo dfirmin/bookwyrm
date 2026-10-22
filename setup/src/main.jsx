@@ -31,6 +31,16 @@ if (opts.help) {
 
 const ctx = { opts, profile: opts.profile, answers: prefill(opts), hermes: null, uv: null, gatewayRestart: false };
 
+if (opts.uninstall) {
+  const { uninstall } = await import('./uninstall.js');
+  const readline = await import('node:readline/promises');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => (process.stdin.isTTY ? rl.question(q) : Promise.resolve('q'));   // nobody to answer: stop
+  const code = await uninstall(ctx, { ask, out: (l) => console.log(l) });
+  rl.close();
+  process.exit(code);
+}
+
 // For the app (Settings → Knowledge repo, the Library): the registry's targets, what the saved
 // token can do in each, and whether the saved repo is still an active target. One line of JSON.
 if (opts.targetsJson) {

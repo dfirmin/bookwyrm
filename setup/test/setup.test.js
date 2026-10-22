@@ -392,6 +392,21 @@ test('profile step refuses a repo Archivist doesn\'t run on, and writes nothing'
   assert.equal(fs.readFileSync(path.join(dir, 'SOUL.md'), 'utf8'), before);
 }));
 
+test('uninstall: only Bookwyrm\'s own folders, never too much', async () => {
+  const un = await import('../src/uninstall.js');
+  assert.equal(state.parseArgs(['--uninstall', '--dry-run']).uninstall, true);
+  assert.ok(un.looksLikeBookwyrm(sys.paths.repo));
+  assert.ok(!un.looksLikeBookwyrm(path.join(sys.paths.repo, 'docs')));
+  assert.ok(un.tooBroad(home) && un.tooBroad(path.parse(home).root) && un.tooBroad(path.dirname(home)));
+  assert.ok(!un.tooBroad(path.join(home, '.bookwyrm')));
+  // Another Hermes profile: its background service stays.
+  fs.mkdirSync(path.join(sys.paths.hermesHome, 'profiles', 'someone-else'), { recursive: true });
+  const { items, keep } = await un.plan('bookwyrm');
+  assert.ok(!items.some((i) => i.what === 'Hermes background service'));
+  assert.ok(items.some((i) => i.target === sys.profileDir('bookwyrm')));
+  fs.rmSync(path.join(sys.paths.hermesHome, 'profiles', 'someone-else'), { recursive: true });
+});
+
 test('natural voice: --voice-engine, and the step only reinstalls when something changed', () => {
   assert.equal(state.parseArgs(['--voice-engine', 'chatterbox-nano']).voiceEngine, 'chatterbox-nano');
   assert.equal(state.parseArgs(['--voice-engine=Kokoro']).voiceEngine, 'kokoro');

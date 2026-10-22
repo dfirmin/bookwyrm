@@ -83,10 +83,13 @@ attach later without changing the core (see
 
 Before you start, have two things ready:
 
-- **An Anthropic API key** ([console.anthropic.com](https://console.anthropic.com/settings/keys)).
+- **An Anthropic API key** ([console.anthropic.com](https://console.anthropic.com/settings/keys)),
+  or your company's gateway address, model name and key (see below).
 - **A fine-grained GitHub token** ([make one](https://github.com/settings/personal-access-tokens/new))
   that can reach *only* the knowledge repo, with Contents, Issues and Pull requests set to
-  read and write. The token is the real fence on what Bookwyrm can touch.
+  read and write. If your company runs its own Archivist in a private repo, add that repo too,
+  with Contents: read, so Bookwyrm can read its registry. The token is the real fence on what
+  Bookwyrm can touch.
 
 Then run one line. **macOS or Linux** (Terminal):
 
@@ -101,7 +104,7 @@ irm https://raw.githubusercontent.com/dfirmin/bookwyrm/main/install.ps1 | iex
 ```
 
 A setup wizard asks for your name, team and the two keys (it checks them as you go), then lets
-you pick the knowledge repo from **Archivist's registry** (`targets.yaml` in the Archivist repo):
+you pick the knowledge repo from **Archivist's registry** (`targets.yaml` or `targets.yml` in the Archivist repo):
 only active targets are offered, and Bookwyrm confirms the repo carries Archivist's
 `contracts/target.yaml` before using it, so it can't be pointed at an arbitrary repo by mistake
 (see [ADR 0006](docs/adr/0006-knowledge-repo-from-the-registry.md)). Then it installs everything with a checklist: Hermes Agent, the GitHub MCP server, the
@@ -131,8 +134,16 @@ To compare the voices on your machine (speed, memory, and a WAV of each to liste
 choosing, put a 5 to 15 second recording in `~/.bookwyrm/voices/` and pick it in Settings.
 
 `./install.sh --help` lists every option and step. One more thing to do yourself: **protect the
-knowledge repo's `main`** (require a pull request before merging). Bookwyrm's rules say it only
-works through PRs; branch protection is what makes that true.
+knowledge repo's `main`** (require a pull request before merging), and add the people who approve
+changes in Bookwyrm to the protection's **bypass list**. When someone approves a change in
+Bookwyrm's preview, it opens the pull request and merges it for them; without the bypass, the pull
+request waits for a reviewer instead (Bookwyrm says so).
+
+**Your company's own Archivist.** By default Bookwyrm reads the registry in
+[dfirmin/archivist](https://github.com/dfirmin/archivist). To use your company's, pass it to the
+installer (`--registry your-org/archivist`; add `@branch` or `:path/to/targets.yml` if needed, or
+paste the repo's GitHub link), or choose it later in Settings → Knowledge repo → Archivist
+registry. Setup remembers it.
 
 **Using Bookwyrm.** Open it like any app (Applications, the Start menu, or your app menu), then
 click the robot. [docs/setup.md](docs/setup.md) walks through it, with what to do if something's
@@ -147,6 +158,19 @@ Switch any time in the app under Settings → Model, or with
 `LITELLM_API_KEY`). The choice is kept in `~/.bookwyrm/settings.json`, so updates keep it. See
 [ADR 0005](docs/adr/0005-company-gateway.md).
 
+## Removing Bookwyrm
+
+Quit Bookwyrm (the robot's menu → **Quit Bookwyrm**), then run `~/bookwyrm/uninstall.sh` on macOS
+or Linux, or `& "$env:USERPROFILE\bookwyrm\uninstall.ps1"` in PowerShell on Windows. It lists
+what it will remove and asks first (`--dry-run` only lists it):
+- the app shortcut and "open at login";
+- Bookwyrm's Hermes profile and its keys;
+- Hermes' background service, if nothing else uses it;
+- `~/.bookwyrm` and `~/bookwyrm`.
+
+It leaves Hermes itself and everything on GitHub. Then revoke the GitHub token on the web.
+[docs/setup.md](docs/setup.md#removing-bookwyrm) has the details and the manual steps.
+
 ## Layout
 
 ```
@@ -157,6 +181,7 @@ voice/                   The app's local service: calls (Pipecat, local speech m
 voice/prompts/           How Bookwyrm talks on a call
 app/                     The desktop app (Electron): the robot, its call card, the Bookwyrm window
 install.sh, install.ps1  One-line installers: get Node.js and the source, start the wizard
+uninstall.sh, .ps1       Remove Bookwyrm from this computer (the wizard's --uninstall)
 setup/                   The setup wizard (Ink): every install step, safe to re-run
 docs/setup.md            Installing, using, troubleshooting, removing
 docs/adr/                Decisions

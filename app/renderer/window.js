@@ -1013,15 +1013,17 @@ bw.onShow((opts) => route(opts));
 (async () => {
   await applyOs();
   voiceUrl = await bw.voiceUrl();
-  try {
-    const s = await api("/api/settings");
+  initDoc({ api, json, toast, onAsk: askAbout, onChanges: refreshChanges, voiceUrl: () => voiceUrl });
+  // Show the page asked for straight away; the greeting and history fill in as the service answers
+  // (on a slow or cold machine that can take a few seconds).
+  route(Object.fromEntries(new URLSearchParams(location.search)));
+  api("/api/settings").then((s) => {
     const first = s.name.split(" ")[0];
     if (first) $("empty-greeting").textContent = `What do you need, ${first}?`;
     if (s.repo) $("empty-repo").textContent = `Ask about ${s.repo}, or tell Bookwyrm something it should know.`;
-  } catch {}
-  initDoc({ api, json, toast, onAsk: askAbout, onChanges: refreshChanges, voiceUrl: () => voiceUrl });
+  }).catch(() => {});
   await loadHistory();
-  route(Object.fromEntries(new URLSearchParams(location.search)));
+  if (view === "chat" && conv) $("view-title").textContent = titleOf(conv);
   refreshBadge();
   refreshStatus();
   refreshChanges();

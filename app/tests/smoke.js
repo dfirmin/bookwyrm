@@ -66,9 +66,12 @@ app.whenReady().then(async () => {
     await wait(250);
     win = BrowserWindow.getAllWindows().find((w) => w !== companion);
   }
-  await wait(1000);
   check(!!win && win.isVisible(), "Bookwyrm window opens");
-  const title = await win.webContents.executeJavaScript("document.getElementById('view-title').textContent");
+  let title = "";
+  for (let i = 0; i < 40 && title !== "Settings"; i++) {   // the page shows as soon as the window's script runs
+    await wait(250);
+    title = await win.webContents.executeJavaScript("document.getElementById('view-title').textContent").catch(() => "");
+  }
   check(title === "Settings", `opens on the page asked for (${title})`);
 
   const hide = ipcMain._invokeHandlers?.get?.("companion:set-visible");

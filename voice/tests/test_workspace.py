@@ -271,6 +271,28 @@ def test_edits_overlay():
         shutil.rmtree(root)
 
 
+def test_case_only_paths():
+    """Macs and Windows treat index.md and INDEX.md as one file; GitHub doesn't. Lookups are by the
+    exact name, and unpublished edits are stored so two names can never collide."""
+    gh, ws, root = make({"index.md": "# Index\n", "knowledge/Pikachu.md": "pika\n"})
+    try:
+        run(ws.sync())
+        assert ws.read_main("INDEX.md") is None and not ws.exists("knowledge/pikachu.md")
+        ws.move("c", "index.md", "INDEX.md")                       # a rename by case alone
+        assert ws.read("INDEX.md", "c") == "# Index\n" and not ws.exists("index.md", "c")
+        ch = ws.get_change("c")
+        assert ch.files["INDEX.md"]["op"] == "write" and ch.files["index.md"]["op"] == "delete"
+        assert ch.new("INDEX.md").is_file() and not (ch.dir / "new" / "INDEX.md").exists()
+        ws.review("c", "approved")
+        r = run(ws.publish("c"))
+        assert r["merged"] and "INDEX.md" in gh.main and "index.md" not in gh.main
+        # Names Windows won't store are fine as edits too.
+        ws.write("d", "knowledge/Type: Null.md", "x\n")
+        assert ws.read("knowledge/Type: Null.md", "d") == "x\n"
+    finally:
+        shutil.rmtree(root)
+
+
 def test_review_and_publish():
     gh, ws, root = make()
     try:

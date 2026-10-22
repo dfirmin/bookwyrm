@@ -25,6 +25,7 @@ through workspace_mcp.py, to Hermes.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import shutil
@@ -80,6 +81,10 @@ def repo_key(repo: str) -> str:
 
 def now_utc() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _key(path: str) -> str:
+    return hashlib.sha1(path.encode("utf-8")).hexdigest()
 
 
 def _read(path: Path) -> str:
@@ -444,6 +449,15 @@ class Change:
     def files(self) -> dict[str, dict]:
         return self.manifest.setdefault("files", {})
 
+    # Overlay files are stored under a hash of their repo path, not the path itself. Macs and
+    # Windows treat index.md and INDEX.md as one file, and Windows refuses names like CON or
+    # "Type: Null.md"; a hash is the same everywhere.
+    def new(self, path: str) -> Path:
+        return self.dir / "new" / _key(path)
+
+    def base(self, path: str) -> Path:
+        return self.dir / "base" / _key(path)
+
 
 class Workspace:
     """One knowledge repo on this machine. ``settings`` is called each time so changes made in the
@@ -465,6 +479,7 @@ class Workspace:
         self.subscribers: set[asyncio.Queue] = set()
         self.syncing = False
         self.error: str | None = None
+        self._paths: set[str] | None = None   # exact-case listing of main, rebuilt after a sync
 
     # ---- state and events
 
@@ -545,6 +560,7 @@ class Workspace:
                             target.parent.mkdir(parents=True, exist_ok=True)
                             target.write_bytes(data)
                     changed.append(name)
+        self._paths = None
         self._save_state(sha=head, synced_at=time.time(), checked_at=time.time())
         changed = sorted({p for p in changed if p.split("/")[0] not in HIDDEN_TOP})
         if changed:
@@ -589,6 +605,16 @@ class Workspace:
     def _main_file(self, path: str) -> Path:
         return self.main / clean_path(path)
 
+    def _main_paths(self) -> set[str]:
+        """Every file on main, spelled exactly as GitHub has it. Lookups go through this, not the
+        filesystem: on a Mac or Windows, asking for INDEX.md would find index.md."""
+        if self._paths is None:
+            self._paths = set(self.list_paths())
+        return self._paths
+
+    def _main_has(self, path: str) -> bool:
+        return path in self._main_paths()
+
     def _remove(self, path: str):
         try:
             self._main_file(path).unlink(missing_ok=True)
@@ -610,7 +636,7 @@ class Workspace:
 
     def tree(self, change: str | None = None) -> list[dict]:
         """Every file, with any change's additions and deletions applied, as a nested list."""
-        paths = set(self.list_paths())
+        paths = set(self._main_paths())
         marks: dict[str, str] = {}
         if change and (ch := self.get_change(change)):
             for p, f in ch.files.items():
@@ -639,7 +665,7 @@ class Workspace:
 
     def read_main(self, path: str) -> str | None:
         f = self._main_file(path)
-        if not f.is_file():
+        if not self._main_has(clean_path(path)):
             return None
         data = f.read_bytes()
         if not is_text(data):
@@ -653,7 +679,7 @@ class Workspace:
             f = ch.files[path]
             if f["op"] == "delete":
                 raise WorkspaceError(f"{path} is deleted in this conversation's changes (not published yet).")
-            return _read(ch.dir / "new" / path)
+            return _read(ch.new(path))
         text = self.read_main(path)
         if text is None:
             raise WorkspaceError(f"There's no {path} in {self.repo}.")
@@ -677,7 +703,7 @@ class Workspace:
         except re.error as e:
             raise WorkspaceError(f"That pattern isn't a valid regular expression: {e}") from e
         prefix = clean_path(under).rstrip("/") + "/" if under.strip("/ ") else ""
-        paths = [p for p in self.list_paths() if p.startswith(prefix)]
+        paths = sorted(p for p in self._main_paths() if p.startswith(prefix))
         overlay: dict[str, dict] = {}
         if change and (ch := self.get_change(change)):
             overlay = ch.files
@@ -758,37 +784,38 @@ class Workspace:
                 self._record_base(ch, path)
             return
         self._record_base(ch, path)
-        ch.files[path] = {"op": "write", "status": "pending", "by": by, "base_exists": (self.main / path).is_file()}
+        ch.files[path] = {"op": "write", "status": "pending", "by": by, "base_exists": self._main_has(path)}
         order = ch.manifest.setdefault("order", [])
         if path not in order:
             order.append(path)
 
     def _record_base(self, ch: Change, path: str):
-        base = ch.dir / "base" / path
+        base = ch.base(path)
         src = self.main / path
-        if src.is_file():
+        there = self._main_has(path)
+        if there:
             base.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, base)
         else:
             base.unlink(missing_ok=True)
         if path in ch.files:
-            ch.files[path]["base_exists"] = src.is_file()
+            ch.files[path]["base_exists"] = there
             ch.files[path].pop("upstream", None)
 
     def base_text(self, ch: Change, path: str) -> str | None:
-        f = ch.dir / "base" / path
+        f = ch.base(path)
         return _read(f) if f.is_file() else None
 
     def write(self, cid: str, path: str, content: str, *, by: str = "bookwyrm", approve: bool = False) -> dict:
         path = clean_path(path)
         if len(content.encode("utf-8")) > TEXT_LIMIT:
             raise WorkspaceError(f"That's too big for one file ({len(content):,} characters).")
-        if (self.main / path).is_dir():
+        if any(p.startswith(path + "/") for p in self._main_paths()):
             raise WorkspaceError(f"{path} is a folder.")
         ch = self._ensure_change(cid)
         self._touch(ch, path, by=by)
         f = ch.files[path]
-        target = ch.dir / "new" / path
+        target = ch.new(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8", newline="")
         f.update(op="write", status="approved" if approve else "pending", by=by, updated=time.time())
@@ -806,13 +833,13 @@ class Workspace:
         if len(content.encode("utf-8")) > TEXT_LIMIT:
             raise WorkspaceError(f"That's too big for one file ({len(content):,} characters).")
         ch = self._ensure_change(cid)
-        b = ch.dir / "base" / path
+        b = ch.base(path)
         if base is None:
             b.unlink(missing_ok=True)
         else:
             b.parent.mkdir(parents=True, exist_ok=True)
             b.write_text(base, encoding="utf-8", newline="")
-        n = ch.dir / "new" / path
+        n = ch.new(path)
         n.parent.mkdir(parents=True, exist_ok=True)
         n.write_text(content, encoding="utf-8", newline="")
         ch.files[path] = {"op": "write", "status": "approved", "by": "person", "base_exists": base is not None,
@@ -840,7 +867,7 @@ class Workspace:
         ch = self._ensure_change(cid)
         self._touch(ch, path, by=by)
         f = ch.files[path]
-        (ch.dir / "new" / path).unlink(missing_ok=True)
+        (ch.new(path)).unlink(missing_ok=True)
         if not f["base_exists"]:     # it only ever existed in this change: just drop it
             del ch.files[path]
             self._save(ch)
@@ -869,8 +896,8 @@ class Workspace:
         for p in paths:
             if p in ch.files:
                 del ch.files[p]
-                (ch.dir / "new" / p).unlink(missing_ok=True)
-                (ch.dir / "base" / p).unlink(missing_ok=True)
+                (ch.new(p)).unlink(missing_ok=True)
+                (ch.base(p)).unlink(missing_ok=True)
         self._save(ch)
         self.emit({"type": "change", "change": cid, "op": "discard", "paths": paths})
         return {"discarded": paths}
@@ -899,7 +926,7 @@ class Workspace:
             raise WorkspaceError(f"{path} has no unpublished changes in this conversation.")
         f = ch.files[path]
         before = self.read_main(path)
-        after = None if f["op"] == "delete" else _read(ch.dir / "new" / path)
+        after = None if f["op"] == "delete" else _read(ch.new(path))
         order = [p for p in ch.manifest.get("order", []) if p in ch.files]
         return {"path": path, **f, "before": before, "after": after, "index": order.index(path), "total": len(order),
                 "upstream_changed": bool(f.get("upstream"))}
@@ -975,7 +1002,7 @@ class Workspace:
                 elif theirs is not None:
                     deletes.append(p)
                 continue                  # (already deleted on GitHub: nothing to do)
-            ours = _read(ch.dir / "new" / p)
+            ours = _read(ch.new(p))
             if theirs == base:
                 merged = ours
             elif base is None or theirs is None:
@@ -1055,8 +1082,8 @@ class Workspace:
             f = ch.files.get(p)
             if f and f["status"] in ("approved", "rejected") and f.get("updated") == updated:
                 del ch.files[p]
-                (ch.dir / "new" / p).unlink(missing_ok=True)
-                (ch.dir / "base" / p).unlink(missing_ok=True)
+                (ch.new(p)).unlink(missing_ok=True)
+                (ch.base(p)).unlink(missing_ok=True)
         self._save(ch)
         return ch
 
@@ -1086,9 +1113,15 @@ class Workspace:
 
 
 def _extract(tar: Path, out: Path):
+    """Unpack the repo. A file this computer can't store (a name Windows refuses, or one that
+    clashes by case with another on a Mac) is skipped and logged, not fatal."""
     out.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tar) as t:
-        t.extractall(out, filter="data")
+        for member in t:
+            try:
+                t.extract(member, out, filter="data")
+            except (OSError, tarfile.TarError) as e:
+                logger.warning(f"Skipped {member.name} from the repo download: {e}")
 
 
 # ---- what Hermes is told about the workspace ------------------------------------------------------
